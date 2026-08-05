@@ -1,0 +1,13 @@
+package-lock.json
+node_modules
+.vscode
+dist
+build
+release
+.DS_Store
+yarn.lock
+.pnpm-store
+*.tsbuildinfo
+
+# Claude Code local settings
+.claude/settings.local.json

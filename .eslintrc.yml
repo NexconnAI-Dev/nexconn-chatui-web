@@ -1,0 +1,33 @@
+env:
+  browser: true
+  commonjs: true
+  es2020: true
+extends:
+  - eslint:recommended
+root: true
+globals:
+  __COMMIT_ID__: readonly
+  __VERSION__: readonly
+  __REQUIRED_ENGINE_VERSION__: readonly
+  __DEV__: readonly
+parser: '@typescript-eslint/parser'
+parserOptions:
+  ecmaVersion: 2020
+  sourceType: module
+plugins:
+  - '@typescript-eslint'
+rules:
+  # TypeScript performs these checks with type information.
+  no-undef: off
+  no-unused-vars: off
+
+  # Existing regular expressions intentionally use escaped delimiters.
+  no-useless-escape: off
+  no-extra-semi: off
+
+  # Allow established switch and callback patterns while retaining the
+  # correctness rules from eslint:recommended.
+  no-case-declarations: off
+  no-inner-declarations: off
+  no-redeclare: off
+  no-trailing-spaces: error

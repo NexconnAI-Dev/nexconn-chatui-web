@@ -1,0 +1,15 @@
+{
+  "entryPoints": ["src/index.ts"],
+  "tsconfig": "tsconfig.lib.json",
+  "plugin": ["typedoc-plugin-markdown"],
+  "out": "release/apidoc/md",
+  "name": "Nexconn ChatUI",
+  "readme": "scripts/assets/README_4_APIDOC.md",
+  "includeVersion": true,
+  "excludeInternal": true,
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "disableSources": true,
+  "hideBreadcrumbs": false,
+  "hideInPageTOC": false
+}
