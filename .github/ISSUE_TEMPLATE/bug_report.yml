@@ -16,17 +16,17 @@ body:
     validations:
       required: true
   - type: textarea
-    id: description
+    id: actual
     attributes:
-      label: Description
-      description: Describe the observed behavior and its impact.
+      label: Actual behavior
+      description: Describe what happened and its impact.
     validations:
       required: true
   - type: textarea
-    id: reproduction
+    id: steps
     attributes:
-      label: Reproduction
-      description: Provide the smallest reproducible example and exact steps.
+      label: Reproduction steps
+      description: List the exact steps that reproduce the problem.
     validations:
       required: true
   - type: textarea
@@ -38,8 +38,23 @@ body:
   - type: textarea
     id: environment
     attributes:
-      label: Environment
+      label: Platform and environment
       description: Include browser, operating system, framework, and relevant dependency versions.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Include relevant logs, stack traces, or write "None" if no logs are available.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: minimal_reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide a minimal code sample or a link to a small reproducible project. Remove credentials and private data.
     validations:
       required: true
   - type: checkboxes
@@ -47,7 +62,7 @@ body:
     attributes:
       label: Checklist
       options:
-        - label: I searched existing issues and pull requests.
+        - label: I searched existing issues.
           required: true
         - label: I removed secrets and private data from this report.
           required: true

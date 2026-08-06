@@ -1,4 +1,4 @@
-# Nexconn ChatUI
+# Official Web Chat UI SDK for [Nexconn Chat](https://www.nexconn.ai/product/chat)
 
 The official Web Components UI kit for [Nexconn Chat](https://www.nexconn.ai/product/chat). `@nexconn/chatui` provides Lit-based custom elements with the `nc-` prefix for adding a chat experience to web applications built with any framework that supports custom elements.
 
@@ -102,9 +102,9 @@ The generated API documentation is written to `release/apidoc/`.
 
 See the [Nexconn ChatUI release notes](https://docs.nexconn.ai/chatui-web/release-notes) for version changes and upgrade information.
 
-## Contributing
+## Feedback
 
-Contributions are welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md), preserve existing public API behavior, include relevant tests or validation, and describe user-visible changes in your pull request.
+This repository is a read-only source mirror. Nexconn does not accept pull requests or feature requests for ChatUI. Report reproducible bugs through [GitHub Issues](https://github.com/NexconnAI-Dev/nexconn-chatui-web/issues); submitted bug reports do not create a commitment or delivery timeline.
 
 ## Support and Security
 
