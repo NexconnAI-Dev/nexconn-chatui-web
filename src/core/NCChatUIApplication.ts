@@ -35,7 +35,7 @@ import { NCChatUICode } from '@lib/enums/NCChatUICode';
  *       return userIds.map(id => ({
  *         userId: id,
  *         name: `User ${id}`,
- *         portraitUri: `https://example.com/avatar/${id}.png`
+ *         avatarUrl: `https://example.com/avatar/${id}.png`
  *       }));
  *     },
  *     reqGroupProfiles: async (groupIds) => {
@@ -43,15 +43,16 @@ import { NCChatUICode } from '@lib/enums/NCChatUICode';
  *       return groupIds.map(id => ({
  *         groupId: id,
  *         name: `Group ${id}`,
- *         portraitUri: `https://example.com/group/${id}.png`
+ *         avatarUrl: `https://example.com/group/${id}.png`,
+ *         memberCount: 0
  *       }));
  *     },
  *     reqSystemProfiles: async (targetIds) => {
  *       // Fetch system channel profiles
  *       return targetIds.map(id => ({
- *         targetId: id,
+ *         systemId: id,
  *         name: `System ${id}`,
- *         portraitUri: `https://example.com/system/${id}.png`
+ *         avatarUrl: `https://example.com/system/${id}.png`
  *       }));
  *     },
  *     reqGroupMembers: async (groupId) => {
@@ -77,7 +78,7 @@ export interface ChatUIInitParams {
    */
   hooks: ServiceHooks;
   /**
-   * Log output level, defaults to `LogL.WARN(2)`
+   * Log output level, defaults to `LogLevel.WARN(2)`
    */
   logLevel?: LogLevel;
   /**
@@ -162,7 +163,7 @@ function AfterReady(tag: string) {
  *     }
  *   },
  *   language: 'en_US',
- *   logLevel: LogL.INFO
+ *   logLevel: LogLevel.INFO
  * });
  *
  * if (!app) {
@@ -345,8 +346,8 @@ export class NCChatUIApplication extends EventDispatcher<EventDefined> {
    *       return language === 'en_US' ? '[Gift]' : '[Gift]';
    *     },
    *     component: {
-   *       tag: 'custom-gift-message',
-   *       constructor: CustomGiftMessageElement
+   *       tagName: 'custom-gift-message',
+   *       elementClass: CustomGiftMessageElement
    *     }
    *   }
    * ]);
@@ -483,7 +484,7 @@ export class NCChatUIApplication extends EventDispatcher<EventDefined> {
    * app.updateUserProfile({
    *   userId: 'user123',
    *   name: 'John Doe',
-   *   portraitUri: 'https://example.com/avatar.png'
+   *   avatarUrl: 'https://example.com/avatar.png'
    * });
    * ```
    */
@@ -500,7 +501,7 @@ export class NCChatUIApplication extends EventDispatcher<EventDefined> {
    * app.updateGroupProfile({
    *   groupId: 'group456',
    *   name: 'Project Team',
-   *   portraitUri: 'https://example.com/group.png',
+   *   avatarUrl: 'https://example.com/group.png',
    *   memberCount: 10
    * });
    * ```

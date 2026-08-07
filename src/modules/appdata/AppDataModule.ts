@@ -20,7 +20,7 @@ export interface ServiceHooks {
    *   return users.map(user => ({
    *     userId: user.id,
    *     name: user.displayName,
-   *     portraitUri: user.avatarUrl
+   *     avatarUrl: user.avatarUrl
    *   }));
    * }
    * ```
@@ -38,7 +38,7 @@ export interface ServiceHooks {
    *   return groups.map(group => ({
    *     groupId: group.id,
    *     name: group.name,
-   *     portraitUri: group.avatarUrl,
+   *     avatarUrl: group.avatarUrl,
    *     memberCount: group.memberCount
    *   }));
    * }
@@ -56,9 +56,9 @@ export interface ServiceHooks {
    * reqSystemProfiles: async (targetIds) => {
    *   const systems = await fetchSystemChannelsFromBackend(targetIds);
    *   return systems.map(sys => ({
-   *     targetId: sys.id,
+   *     systemId: sys.id,
    *     name: sys.name,
-   *     portraitUri: sys.iconUrl
+   *     avatarUrl: sys.iconUrl
    *   }));
    * }
    * ```
@@ -92,7 +92,7 @@ export interface ServiceHooks {
    * getDefaultUserProfile: (userId) => ({
    *   userId,
    *   name: `User ${userId.substring(0, 8)}`,
-   *   portraitUri: 'https://example.com/default-avatar.png'
+   *   avatarUrl: 'https://example.com/default-avatar.png'
    * })
    * ```
    */
@@ -123,7 +123,7 @@ export interface ServiceHooks {
    * @example
    * ```typescript
    * getDefaultSystemProfile: (systemId) => ({
-   *   targetId: systemId,
+   *   systemId,
    *   name: `System ${systemId}`,
    *   avatarUrl: 'https://example.com/default-system.png'
    * })

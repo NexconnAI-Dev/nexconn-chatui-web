@@ -28,26 +28,44 @@ pnpm add @nexconn/chatui
 ## Quick Start
 
 ```ts
+import { NCEngine } from '@nexconn/chat';
 import { NCChatUIApplication } from '@nexconn/chatui';
 import type { ServiceHooks } from '@nexconn/chatui';
 
-const hooks: ServiceHooks = {
-  reqUserProfiles: async () => [],
-  reqGroupProfiles: async () => [],
-  reqSystemProfiles: async () => [],
-  reqGroupMembers: async () => [],
-};
+async function startChatUI() {
+  NCEngine.initialize({ appKey: 'your-app-key' });
 
-const app = NCChatUIApplication.initialize({
-  hooks,
-  language: 'en_US',
-});
+  const hooks: ServiceHooks = {
+    reqUserProfiles: async () => [],
+    reqGroupProfiles: async () => [],
+    reqSystemProfiles: async () => [],
+    reqGroupMembers: async () => [],
+  };
 
-app?.ready();
+  const app = NCChatUIApplication.initialize({
+    hooks,
+    language: 'en_US',
+  });
+
+  if (!app) {
+    throw new Error('Nexconn ChatUI initialization failed.');
+  }
+
+  app.ready();
+
+  const result = await NCEngine.connect({ token: 'user-token-from-your-backend' });
+  if (!result.isOk) {
+    throw new Error('Nexconn Chat connection failed.');
+  }
+}
+
+startChatUI();
 ```
 
-Call `registerCustomMessages()` before `ready()` when custom message renderers
-are needed. See the generated API documentation for the complete public API.
+Mount `<nc-chat-ui-app-provider></nc-chat-ui-app-provider>` in a host element with
+an explicit height after `ready()` has registered the custom elements. Call
+`registerCustomMessages()` before `ready()` when custom message renderers are
+needed. See the generated API documentation for the complete public API.
 
 ## Support and License
 
