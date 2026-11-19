@@ -92,12 +92,12 @@ export interface ChatUIInitParams {
   // maxTopCount?: number;
   /**
    * Maximum time allowed to recall sent messages, in seconds
-   * @description Defaults to 120 seconds if not provided or invalid
+   * @description Must be a finite positive number. Zero, invalid, or omitted values default to 120 seconds.
    */
   allowedToRecallTime?: number;
   /**
    * Maximum time allowed to re-edit recalled messages, in seconds
-   * @description Defaults to 60 seconds if not provided or invalid
+   * @description Must be a finite positive number. Zero, invalid, or omitted values default to 60 seconds.
    */
   allowedToReEditTime?: number;
   /**

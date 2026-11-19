@@ -30,6 +30,7 @@ import { ConnectionStatusElement } from './connection-status';
 import { MultiChoiceMenuElement } from './multi-choice-menu';
 import { InputReplyBarElement } from './input-reply-bar';
 import { MessageSentStatusElement } from './message-sent-status';
+import { ReactionElement } from './reaction';
 
 /**
  * Component tag definitions
@@ -67,6 +68,7 @@ export const Components = {
   MESSAGE_SENT_STATUS: 'nc-message-sent-status',
   CONNECTION_STATUS: 'nc-connection-status',
   READ_RECEIPT_MODAL: 'nc-read-receipt-modal',
+  REACTION: 'nc-reaction',
 };
 
 /**
@@ -105,4 +107,5 @@ export const components: { [key: string]: CustomElementConstructor } = {
   [Components.INPUT_REPLY_BAR]: InputReplyBarElement,
   [Components.MESSAGE_SENT_STATUS]: MessageSentStatusElement,
   [Components.READ_RECEIPT_MODAL]: ReadReceiptModalElement,
+  [Components.REACTION]: ReactionElement,
 };

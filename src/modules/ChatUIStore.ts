@@ -82,6 +82,9 @@ export class ChatUIStore {
     this._commands.set(ChatUICommand.MENTION_ALL, true);
     this._commands.set(ChatUICommand.PROMPT_SENDER_WHEN_QUOTE_MESSAGE, false);
     this._commands.set(ChatUICommand.DELETE_MESSAGES_WHILE_DELETE_CHANNEL, false);
+    this._commands.set(ChatUICommand.MESSAGE_REACTION_ENABLED, false);
+    this._commands.set(ChatUICommand.SHOW_MESSAGE_REACT_USERS, false);
+    this._commands.set(ChatUICommand.MESSAGE_EDIT_ENABLED, false);
   }
 
   /**

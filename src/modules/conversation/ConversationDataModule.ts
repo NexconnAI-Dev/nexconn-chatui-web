@@ -58,10 +58,16 @@ export class ChannelDataModule extends ChatUIModule {
   /** Pending channel notification queue. */
   private _converNtfQueue: Array<ChannelPinnedSyncEvent | ChannelNoDisturbLevelSyncEvent> = [];
 
+  /** Continue processing queued data in the next event loop. */
+  private _handleQueueTimer: ReturnType<typeof setTimeout> | null = null;
+
   /**
    * Cached channel object pool that prevents duplicate instances across pinned and regular lists.
    */
   private _pool: Map<string, ChatUIChannelModel> = new Map();
+
+  /** Invalidates asynchronous work started for a previous signed-in user. */
+  private _userCacheGeneration = 0;
 
   /** Delayed retry timer for failed remote channel list requests. */
   private _getRemoteChannelsTimer: any = null;
@@ -109,7 +115,10 @@ export class ChannelDataModule extends ChatUIModule {
 
     const messageHandlerParams: MessageHandlerParams = {
       onMessageReceiptResponse: (event) => this._onV5ReceiptResponse(event),
-      onOfflineMessageSyncCompleted: (event) => this._pullOfflineMessageFinished = true,
+      onOfflineMessageSyncCompleted: () => {
+        this._pullOfflineMessageFinished = true;
+        this._handleQueue();
+      },
     }
     const channelHandlerParams: ChannelHandlerParams = {
       onChannelUnreadStatusSync: (event) => this._onSyncReadStatus(event),
@@ -123,13 +132,17 @@ export class ChannelDataModule extends ChatUIModule {
   }
 
   protected _onInitUserCache(): void {
-    this._getMoreRemoteChannels(true)
+    this._getMoreRemoteChannels(true, undefined, this._userCacheGeneration)
   }
 
   protected _onDestroyUserCache(): void {
+    this._userCacheGeneration += 1;
     // Clear in-memory data when the signed-in user changes.
+    this._messageQueue.length = 0;
+    this._converNtfQueue.length = 0;
     this._channelList.length = 0;
     this._pool.clear();
+    this.#_rrV5Map.clear();
     this._openedChannelModel = null;
     this._getRemoteChannelsFinished = false;
     this._pullOfflineMessageFinished = false;
@@ -137,6 +150,10 @@ export class ChannelDataModule extends ChatUIModule {
     if (this._getRemoteChannelsTimer) {
       clearTimeout(this._getRemoteChannelsTimer);
       this._getRemoteChannelsTimer = null;
+    }
+    if (this._handleQueueTimer !== null) {
+      clearTimeout(this._handleQueueTimer);
+      this._handleQueueTimer = null;
     }
 
     this._clearTypingStatus();
@@ -231,7 +248,7 @@ export class ChannelDataModule extends ChatUIModule {
       }
 
       // Ignore messages that are not the channel's latest message.
-      if (model.latestMessage && (model.latestMessage.transactionId === item.transactionId || model.latestMessage.messageId == item.messageId)) {
+      if (model.latestMessage?.isEqual(item)) {
         model.latestMessage = item;
         changed.push(model);
       }
@@ -331,7 +348,7 @@ export class ChannelDataModule extends ChatUIModule {
     if (this.ctx.isReadReceiptV5) {
       // V5 behavior: read data is handled through kitReadReceiptInfo.
       const privateList = list.filter((item) => item.channelType === ChannelType.DIRECT && item.latestMessage && item.latestMessage.senderUserId === this.ctx.userId);
-      this._handleLatestReadReceiptInfoV5(privateList);
+      this._handleLatestReadReceiptInfoV5(privateList, this._userCacheGeneration);
     }
   }
 
@@ -353,6 +370,7 @@ export class ChannelDataModule extends ChatUIModule {
    * Handle unread count synchronization across clients.
    */
   private _onSyncReadStatus = async ({ channelIdentifier }: ChannelUnreadStatusSyncEvent): Promise<void> => {
+    const generation = this._userCacheGeneration;
     const key = trans2ChannelKey(channelIdentifier);
     let cached = this._pool.get(key);
     if (!cached) {
@@ -363,7 +381,7 @@ export class ChannelDataModule extends ChatUIModule {
       return;
     }
     const { isOk, data } = await channel.reload();
-    if (!isOk) {
+    if (!isOk || generation !== this._userCacheGeneration || this._pool.get(key) !== cached) {
       return;
     }
 
@@ -627,19 +645,22 @@ export class ChannelDataModule extends ChatUIModule {
    */
   private async _getMoreRemoteChannels(
     preview: boolean,
-    query?: ChannelsQuery
+    query?: ChannelsQuery,
+    generation: number = this._userCacheGeneration,
   ) {
+    if (generation !== this._userCacheGeneration) return;
     const isReset = !query;
     const pageSize = isReset ? 30 : 200;
     if (!query) {
       query = BaseChannel.createChannelsQuery({ pageSize, startTime: 0 })
     }
     const { data, isOk } = await query.loadNextPage();
+    if (generation !== this._userCacheGeneration) return;
 
     if (!isOk) {
       if (!preview) {
         // Retry after 1 second.
-        this._getRemoteChannelsTimer = setTimeout(() => this._getMoreRemoteChannels(preview, query), 1000);
+        this._getRemoteChannelsTimer = setTimeout(() => this._getMoreRemoteChannels(preview, query, generation), 1000);
       }
       // Ignore preview failures.
       return
@@ -653,14 +674,14 @@ export class ChannelDataModule extends ChatUIModule {
 
     if (preview) {
       // Render preview data immediately.
-      this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.CHANNELS_LIST_RESET, list));
+      this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.CHANNELS_LIST_RESET, { list, generation }));
       return;
     }
 
     if (this.ctx.isReadReceiptV5) {
       // Fetch and attach V5 read data for latest messages.
       // Run asynchronously without blocking the main channel list flow.
-      this._handleLatestReadReceiptInfoV5(list);
+      this._handleLatestReadReceiptInfoV5(list, generation);
     }
 
     if (isReset) {
@@ -673,12 +694,15 @@ export class ChannelDataModule extends ChatUIModule {
 
     if (isReset) {
       // Notify the UI to render the first screen.
-      this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.CHANNELS_LIST_RESET, this._channelList.slice(0, 30)));
+      this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.CHANNELS_LIST_RESET, {
+        list: this._channelList.slice(0, 30),
+        generation,
+      }));
     }
 
     if (hasMore) {
       // Recursively fetch more data at 300 ms intervals to avoid rate limiting.
-      this._getRemoteChannelsTimer = setTimeout(() => this._getMoreRemoteChannels(preview, query), 300);
+      this._getRemoteChannelsTimer = setTimeout(() => this._getMoreRemoteChannels(preview, query, generation), 300);
       return;
     }
 
@@ -689,7 +713,8 @@ export class ChannelDataModule extends ChatUIModule {
   /**
    * Fetch V5 read data for latest messages concurrently and write it to channel readReceiptInfo.
    */
-  private async _handleLatestReadReceiptInfoV5(list: ChatUIChannelModel[]) {
+  private async _handleLatestReadReceiptInfoV5(list: ChatUIChannelModel[], generation: number) {
+    if (generation !== this._userCacheGeneration) return;
     const identifiers = this._buildIdentifiersForLatest(list);
     if (!identifiers.length) return;
 
@@ -701,6 +726,7 @@ export class ChannelDataModule extends ChatUIModule {
     try {
       // const results = await Promise.all(batches.map((ids) => getMessageReadReceiptInfoV5ByIdentifiers(ids)));
       const results = await Promise.all(batches.map((ids) => BaseChannel.getMessageReadReceiptInfoByIdentifiers(ids)));
+      if (generation !== this._userCacheGeneration) return;
       results.forEach((res: NCResult<MessageReadReceiptInfo[]>) => {
         const arr: MessageReadReceiptInfo[] = res?.data || [];
         arr.forEach((it: MessageReadReceiptInfo) => {
@@ -723,6 +749,7 @@ export class ChannelDataModule extends ChatUIModule {
         }
       });
     } catch (e) {
+      if (generation !== this._userCacheGeneration) return;
       this.logger?.warn(LogTag.L_GET_READ_RECEIPT_INFO_V5_E, `getMessageReadReceip·tInfoV5ByIdentifiers error: ${e}`);
     }
   }
@@ -780,6 +807,12 @@ export class ChannelDataModule extends ChatUIModule {
    * @returns
    */
   private _handleQueue() {
+    // Immediate input can consume the next slice before its scheduled callback.
+    if (this._handleQueueTimer !== null) {
+      clearTimeout(this._handleQueueTimer);
+      this._handleQueueTimer = null;
+    }
+
     if (!this._getRemoteChannelsFinished || !this._pullOfflineMessageFinished) {
       return;
     }
@@ -815,7 +848,7 @@ export class ChannelDataModule extends ChatUIModule {
     // Empty the message list before channel notifications so missing cached channels can be classified as deleted or not yet created.
     // Before list loading completes, process only notifications whose updatedItems.latestMessage.isOffline is true.
     // After loading completes, discard those offline notifications and process the rest normally.
-   this._handleChannelNotifyQueue(handleChange, changed, max, maxCostTime, startTime);
+    this._handleChannelNotifyQueue(handleChange, changed, max, maxCostTime, startTime);
 
     if (orderChanged.size) {
       // Calculate channel position changes and notify the UI.
@@ -829,6 +862,15 @@ export class ChannelDataModule extends ChatUIModule {
         // Notify the UI to update the channel list.
         this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.CHANNELS_ITEM_CHANGE, list));
       }
+    }
+
+    if (this._messageQueue.length || this._converNtfQueue.length) {
+      const generation = this._userCacheGeneration;
+      this._handleQueueTimer = setTimeout(() => {
+        if (generation !== this._userCacheGeneration) return;
+        this._handleQueueTimer = null;
+        this._handleQueue();
+      }, 0);
     }
   }
 
@@ -950,7 +992,10 @@ export class ChannelDataModule extends ChatUIModule {
    * @param focusInput - Whether to focus the input by default.
    */
   async openChannel(identifier: ChannelIdentifier, focusInput: boolean = true): Promise<NCResult> {
-    if (!(identifier instanceof ChannelIdentifier)) {
+    if (
+      !(identifier instanceof ChannelIdentifier)
+      || identifier.channelType === ChannelType.OPEN
+      || identifier.channelType === ChannelType.COMMUNITY) {
       return NCResult.fail(NCChatUICode.INVALID_CHANNEL);
     }
 

@@ -6,13 +6,23 @@ export class MessageListMenuItemElement extends LitElement {
     :host {
       display: flex;
       align-items: center;
+      box-sizing: border-box;
+      height: 30px;
       font-size: 12px;
+      line-height: 18px;
       padding: 6px;
       border-radius: 5px;
       cursor: pointer;
     }
     :host(:hover) {
       background-color: #D2E1FE;
+    }
+    img {
+      display: block;
+      flex: 0 0 18px;
+      width: 18px;
+      height: 18px;
+      object-fit: contain;
     }
     .content {
       flex: auto;

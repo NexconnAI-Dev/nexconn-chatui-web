@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { property } from 'lit/decorators.js';
 import { ctx } from './context';
 import { ImageEmojiLibrary, ImageEmoji } from '../../modules/InputModule';
 
@@ -9,9 +10,19 @@ export class EmojiPanelProvider extends LitElement {
       flex-direction: column;
       width: 100%;
       height: 100%;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .emoji-panel-root {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
     }
     .menu-list {
       height: 48px;
+      flex-shrink: 0;
       display: flex;
       flex-direction: row;
       align-items: center;
@@ -34,7 +45,9 @@ export class EmojiPanelProvider extends LitElement {
     }
     .emoji-list {
       flex: 1;
+      min-height: 0;
       overflow: auto;
+      overscroll-behavior: contain;
       padding: 4px 8px;
     }
     .chat-emoji-item {
@@ -62,6 +75,9 @@ export class EmojiPanelProvider extends LitElement {
   private _libraries: ImageEmojiLibrary[] = [];
   private _chats = ctx().input.cloneChatEmojiLibrary();
 
+  @property({ type: Boolean })
+  declare chatOnly: boolean;
+
   connectedCallback() {
     super.connectedCallback();
     this._libraries = ctx().input.cloneImageEmojiLibraries();
@@ -69,6 +85,7 @@ export class EmojiPanelProvider extends LitElement {
   }
 
   private get _menu() {
+    if (this.chatOnly) return [{ icon: this._chats.icon, index: 0 }];
     return [{ icon: this._chats.icon, index: 0 }].concat(
       ...this._libraries.map((item, index) => ({ icon: item.icon, index: index + 1 }))
     );
@@ -88,7 +105,7 @@ export class EmojiPanelProvider extends LitElement {
 
   render() {
     return html`
-      <div @click=${(e: Event) => e.stopPropagation()}>
+      <div class="emoji-panel-root" @click=${(e: Event) => e.stopPropagation()}>
         <div class="menu-list">
           ${this._menu.map(item => html`
             <div class="menu-button ${item.index === this._selected ? 'selected' : ''}" @click=${() => this._selectMenu(item.index)}>

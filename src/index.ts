@@ -5,14 +5,18 @@ export {
   type LanguageDirection,
   type LanguagePackEntries
 } from './languages';
-export type { ChatUIEvent } from './core/ChatUIEvent';
+export { ChatUIEvent } from './core/ChatUIEvent';
 export type { ServiceHooks } from './modules/appdata/AppDataModule';
 export type { GroupProfile, GroupMemberProfile } from './modules/appdata/GroupCache';
 export type { ChatUIUserProfile } from './modules/appdata/UserCache';
 export type { ChatUISystemProfile } from './modules/appdata/SystemCache';
-export { type ChatUIChannelModel } from './models/NCUIChannelModel';
+export { ChatUIChannelModel } from './models/NCUIChannelModel';
 export { ChatUIMentionedType } from './enums/ChatUIMentionedType';
-export { ChatUIMessageModel } from '@lib/models/NCUIMessageModel';
+export {
+  ChatUIMessageModel,
+  ChatUIMessageEditStatus,
+  type ChatUIMessageReaction,
+} from '@lib/models/NCUIMessageModel';
 export type {
   CustomElementClass,
   CustomMessageComponent,
@@ -25,6 +29,8 @@ export {
 export {
   ChatUICommand
 } from './enums/ChatUICommand';
+export type { ReferenceMessageContent } from '@nexconn/chat';
+export { ReferenceMessageStatus } from '@nexconn/chat';
 export {
   ChatUIEvents,
   ModalForwardingType,

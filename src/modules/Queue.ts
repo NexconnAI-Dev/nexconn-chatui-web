@@ -47,6 +47,8 @@ export abstract class BaseQueue<T extends { transactionId?: number }, D> extends
   protected abstract _tag: string;
 
   private _timer: number = -1;
+  protected _generation = 0;
+  private _destroyed = false;
 
   constructor(
     ctx: ChatUIContext,
@@ -67,15 +69,33 @@ export abstract class BaseQueue<T extends { transactionId?: number }, D> extends
   }
 
   protected _onDestroyUserCache(): void {
-    // Clear queued tasks.
+    this._generation += 1;
+    clearTimeout(this._timer);
+    this._timer = -1;
+    this._timestamps.length = 0;
+
+    const pending = this._queue.splice(0);
+    const executing = this._executing.splice(0);
+    for (const task of executing) {
+      const { transactionId } = task.params;
+      if (typeof transactionId === 'number') {
+        this._try2CancelExecutingTask(transactionId);
+      }
+    }
+    for (const task of [...executing, ...pending]) {
+      task.resolve(NCResult.fail(NCChatUICode.TASK_CANCEL));
+    }
   }
 
   public destroy(): void {
-    clearTimeout(this._timer);
-    this._timer = -1;
+    this._destroyed = true;
+    this.ctx.removeEventListener(InnerEvent.DESTROY_USER_CACHE, this._onDestroyUserCache, this);
+    this.ctx.removeEventListener(InnerEvent.INIT_USER_CACHE, this._onInitUserCache, this);
+    this._onDestroyUserCache();
   }
 
   async push(data: T): Promise<NCResult<D>> {
+    if (this._destroyed) return NCResult.fail(NCChatUICode.TASK_CANCEL);
     return new Promise((resolve) => {
       // Add the task to the pending queue.
       this._queue.push({ params: data, resolve });
@@ -123,7 +143,7 @@ export abstract class BaseQueue<T extends { transactionId?: number }, D> extends
   protected abstract _try2CancelExecutingTask(transactionId: number): boolean;
 
   private async _execute(): Promise<void> {
-    if (this._paused || this._queue.length === 0 || this._executing.length >= this._parallel) {
+    if (this._destroyed || this._queue.length === 0 || this._executing.length >= this._parallel) {
       // The pending queue is empty or the concurrent queue is full.
       return;
     }
@@ -134,9 +154,11 @@ export abstract class BaseQueue<T extends { transactionId?: number }, D> extends
       return;
     }
 
+    const generation = this._generation;
     // Rate-limit timer.
     if (this._timer === -1) {
       this._timer = window.setTimeout(() => {
+        if (generation !== this._generation) return;
         // Reset rate-limit state.
         this._timestamps.length = 0;
         this._timer = -1;
@@ -148,6 +170,11 @@ export abstract class BaseQueue<T extends { transactionId?: number }, D> extends
     // Move one pending task to the executing queue.
     const item = this._queue.shift()!;
     this._executing.push(item);
+    if (item.result !== undefined) {
+      // Preserve result order without starting a canceled task.
+      this._checkResolve();
+      return;
+    }
     // Record the execution time.
     this._timestamps.push(Date.now());
 
@@ -161,7 +188,9 @@ export abstract class BaseQueue<T extends { transactionId?: number }, D> extends
 
     // Wait for the task result.
     const result = await promise;
-    item.result = result;
+    if (generation !== this._generation) return;
+    // Cancellation must not be overwritten by a later task result.
+    item.result ??= result;
 
     this._checkResolve();
   }
@@ -179,8 +208,6 @@ export abstract class BaseQueue<T extends { transactionId?: number }, D> extends
   }
 
   protected abstract _handle(data: T): Promise<NCResult<D>>
-
-  private _paused: boolean = false;
 }
 
 type MessageSendQueueTask = {
@@ -201,9 +228,11 @@ export class MessageSendQueue extends BaseQueue<MessageSendQueueTask, Message<an
   }
 
   protected async _handle(opts: MessageSendQueueTask): Promise<NCResult<Message>> {
+    const generation = this._generation;
     const { channelIdentifier, message, params } = opts;
     params.needReceipt = this.ctx.isReadReceiptV5;
     params.pushConfig = this.ctx.store.getPushConfig(message);
+    if (generation !== this._generation) return NCResult.fail(NCChatUICode.TASK_CANCEL);
 
     const channel = createNexconnChannel(channelIdentifier)!;
 
@@ -268,6 +297,10 @@ export class FileUploadQueue extends BaseQueue<FileUploadQueueTask, { message: C
     this._uploaderMap.set(transactionId, uploader);
 
     const res = await uploader.result();
+    // A previous user's upload must not remove a new upload with the same transaction ID.
+    if (this._uploaderMap.get(transactionId) === uploader) {
+      this._uploaderMap.delete(transactionId);
+    }
     if (!res.isOk) {
       this.logger.warn(LogTag.L_UPLOAD_FILE_R, `code: ${res.code}`, traceId);
       return NCResult.fail(res.code, undefined, result);
@@ -280,8 +313,8 @@ export class FileUploadQueue extends BaseQueue<FileUploadQueueTask, { message: C
   protected _try2CancelExecutingTask(transactionId: number): boolean {
     const uploader = this._uploaderMap.get(transactionId);
     if (uploader) {
-      uploader.stop();
       this._uploaderMap.delete(transactionId);
+      uploader.stop();
       return true;
     }
     return false

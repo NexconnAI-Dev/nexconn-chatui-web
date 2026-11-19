@@ -60,6 +60,7 @@ const entries: LanguagePackEntries = {
   'channel.menu.item.remove': 'Delete',
 
   'message.menu.item.reply': 'Reply',
+  'message.menu.item.reactions': 'Reactions',
   'message.menu.item.multi.choice': 'Multi-select',
   'message.menu.item.copy': 'Copy',
   'message.menu.item.forward': 'Forward',
@@ -67,6 +68,7 @@ const entries: LanguagePackEntries = {
   'message.menu.item.delete.for.all': 'Delete for everyone',
   'message.menu.item.speech.to.text': 'Transcribe',
   'message.menu.item.cancel.speech.to.text': 'Cancel Transcribe',
+  'message.menu.item.edit': 'Edit',
   'message.speech.to.text.failed': 'Transcription failed',
   'message.speech.to.text.empty': ' ',
   'message.speech.to.text.unsupported': 'This voice message does not support transcription',
@@ -91,12 +93,29 @@ const entries: LanguagePackEntries = {
   'alert.send.message.maxcount': 'Exceeds {0} characters, please delete some and try again.',
   'alert.message-deleted': 'Message deleted',
   'alert.channel.list.not.ready': 'Channel list is not ready, please try again later',
+  'alert.reaction.limit.reached': 'Reaction limit reached. Cannot add more.',
+  'alert.reaction.failed': 'Reaction failed. Please try again later.',
+  'alert.message.edit.failed': 'Message update failed. Please try again.',
+  'alert.message.edit.discarded': 'Message edit discarded',
+  'alert.message.edit.recalled': 'This message has been recalled and can no longer be edited.',
+  'alert.message.edit.switch': 'Another message is being edited. If you confirm editing the current message, the previously edited message will be lost.',
+  'reaction.total.users': '{0}',
+  'reaction.detail.title': 'Reaction Details',
+  'reaction.detail.loading': 'Loading...',
 
   'dialog.tips.msg': 'Tips',
   'dialog.cancel.msg': 'Cancel',
   'dialog.confirm.msg': 'OK',
   'dialog.forwarding.msg': 'Forward it to',
   'dialog.forwarding.confirm': 'Send',
+  'message.edit.cancel': 'Cancel',
+  'message.edit.confirm': 'Save',
+  'message.edit.edited': 'Edited',
+  'message.edit.updating': 'Updating...',
+  'message.edit.retry': 'Update failed, click to retry',
+  'message.edit.expired': 'This message can no longer be edited',
+  'message.reference.edited': 'Edited',
+  'message.reference.deleted': 'Message deleted',
 
   'take-photo.send-btn.label': 'Send',
   'take-photo.cancel-btn.label': 'Cancel',
@@ -112,13 +131,14 @@ const entries: LanguagePackEntries = {
   'private.combine-msg.signal.title': '{0}\'s chat history',
   'group.combine-msg.title': 'Group chat history',
   'combine-msg.chat-record': 'Chat History',
+  'combine-msg.load-failed': 'Failed to load chat history',
 
   'connection.status.disconnected': 'Disconnected',
   'connection.status.connecting': 'Connecting...',
 
   // Toast
-  'toast.forward.success': 'Forwarded successfully',
   'toast.copy.success': 'Copied',
+  'toast.copy.failed': 'Copy failed',
 };
 
 export default entries;

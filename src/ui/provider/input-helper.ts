@@ -24,8 +24,8 @@ export const secondaryVisible = new Signal(false);
 export const showEmoji = new Signal(false);
 /** Whether to show the mention list. */
 export const showAtList = new Signal(false);
-/** Currently mentioned users. */
-const mentionedUsers: Map<string, RegExp> = new Map();
+/** Literal mention text keyed by user ID. */
+const mentionedUsers: Map<string, string> = new Map();
 /** Whether the mention-all marker is present. */
 let atAll = false;
 
@@ -57,7 +57,7 @@ export const addMentionedUser = (
 
   hidePrompt();
   const name = user.nickname || user.name;
-  mentionedUsers.set(userId, new RegExp(`@${name}`));
+  mentionedUsers.set(userId, `@${name}`);
   textarea.focus();
   const txt = prefix ? `@${name} ` : `${name} `;
   textarea.setRangeText(txt, textarea.selectionStart, textarea.selectionEnd, 'end');
@@ -196,16 +196,17 @@ const pickFileOnSafari = (filter: string, handle: (files: File[]) => void) => {
     const delays = [0, 50, 100, 200, 400, 700, 1100, 1700, 2500];
     for (const ms of delays) {
       pendingTimeouts.push(
-        globalThis.setTimeout(() => finalizeSuccess, ms),
+        globalThis.setTimeout(finalizeSuccess, ms),
       );
     }
-    // No files after focus returns means cancellation or an invalid selection; clean up only.
+    // Process files that arrive after the last poll, or finalize an empty selection.
     pendingTimeouts.push(
       globalThis.setTimeout(() => {
         if (readFiles().length > 0) {
-          return;
+          finalizeSuccess();
+        } else {
+          finalizeCancel();
         }
-        finalizeCancel();
       }, 2800),
     );
   };
@@ -320,8 +321,8 @@ export const handleInput = (textarea: HTMLTextAreaElement, hidden: HTMLDivElemen
   }
 
   // Update mentionedUsers because text can change at any position.
-  mentionedUsers.forEach((reg, userId) => {
-    if (!reg.test(value)) {
+  mentionedUsers.forEach((mentionText, userId) => {
+    if (!value.includes(mentionText)) {
       mentionedUsers.delete(userId);
     }
   });
@@ -347,25 +348,34 @@ export const adjustMessageListScroll = () => {
   });
 };
 
-let lastHeight = -1;
+const textareaHeights = new WeakMap<HTMLTextAreaElement, number>();
 
-export const resizeTextarea = (textarea: HTMLTextAreaElement, hidden: HTMLDivElement, container: HTMLDivElement) => {
-  // Mirror content into hidden and add a marker after a trailing newline to update its height.
-  hidden.innerHTML = textarea.value.replaceAll(/\n$/g, '<br>.').replaceAll('\n', '<br>');
-
-  // Match the hidden div width to the textarea for accurate line wrapping.
+export const resizeTextarea = (textarea: HTMLTextAreaElement, hidden: HTMLDivElement, container: HTMLDivElement, deferred = false) => {
+  if (!textarea.isConnected) return;
   const textareaWidth = textarea.offsetWidth;
-  if (Math.abs(hidden.offsetWidth - textareaWidth) > 1) {
-    hidden.style.width = `${textareaWidth}px`;
-    // Force layout so the width update takes effect.
-    hidden.getBoundingClientRect();
+  if (textareaWidth === 0) {
+    if (!deferred) requestAnimationFrame(() => resizeTextarea(textarea, hidden, container, true));
+    return;
   }
+  // Mirror content into hidden and add a marker after a trailing newline to update its height.
+  hidden.textContent = textarea.value.endsWith('\n') ? `${textarea.value}.` : textarea.value;
 
-  const lineHeight = 21;
-  const initialHeight = 36; // Initial one-line height, including padding.
-  const maxLines = 5;
-  const padding = 18; // Total vertical padding (9px * 2).
-  const maxHeight = lineHeight * maxLines + padding;
+  // Measure without a scrollbar so removing text can shrink the field again.
+  textarea.style.overflowY = 'hidden';
+  // Match the text area rather than its padding box for accurate line wrapping.
+  const style = getComputedStyle(textarea);
+  const textWidth = textarea.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  hidden.style.font = style.font;
+  hidden.style.lineHeight = style.lineHeight;
+  hidden.style.width = `${textWidth}px`;
+
+  const lineHeight = parseFloat(style.lineHeight);
+  const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  // Use the CSS limit so measurement and rendering agree on the maximum height.
+  const maxHeight = parseFloat(style.maxHeight);
+  const margin = parseFloat(style.marginTop) + parseFloat(style.marginBottom);
+  const containerStyle = getComputedStyle(container);
+  const containerPadding = parseFloat(containerStyle.paddingTop) + parseFloat(containerStyle.paddingBottom);
 
   // Measure content height from the hidden div's scrollHeight.
   // The hidden div has no padding, so scrollHeight is the content height.
@@ -374,34 +384,36 @@ export const resizeTextarea = (textarea: HTMLTextAreaElement, hidden: HTMLDivEle
   // Calculate the line count, rounded up with a minimum of one line.
   const lineCount = Math.max(1, Math.ceil(contentHeight / lineHeight));
 
-  // Calculate height from the line count.
-  let finalHeight: number;
-  if (lineCount === 1) {
-    // Use the initial height for one line.
-    finalHeight = initialHeight;
-  } else if (lineCount <= maxLines) {
-    // For two to five lines, use line height * line count + padding.
-    finalHeight = lineHeight * lineCount + padding;
-  } else {
-    // Cap the height above five lines.
-    finalHeight = maxHeight;
-  }
+  const fullHeight = lineHeight * lineCount + padding;
+  const finalHeight = Math.min(fullHeight, maxHeight);
 
   textarea.style.height = `${finalHeight}px`;
-  container.style.height = `${finalHeight}px`;
+  container.style.height = `${finalHeight + margin + containerPadding}px`;
 
-  // Show the scrollbar above five lines.
-  if (lineCount > maxLines) {
+  // Scroll only when the complete text exceeds the visible height.
+  if (fullHeight > maxHeight) {
     textarea.style.overflowY = 'auto';
+    // At the end, show four complete lines plus the 6px preview allowed by CSS;
+    // leave scrolling elsewhere to the caret.
+    if (textarea.selectionStart === textarea.value.length && textarea.selectionEnd === textarea.value.length) {
+      textarea.scrollTop = textarea.scrollHeight;
+    }
   } else {
-    textarea.style.overflowY = 'hidden';
+    textarea.scrollTop = 0;
   }
 
   // Adjust the scroll position only when the height changes.
-  if (lastHeight !== finalHeight) {
-    lastHeight = finalHeight;
+  if (textareaHeights.get(textarea) !== finalHeight) {
+    textareaHeights.set(textarea, finalHeight);
     // Adjust the message list scroll position.
     adjustMessageListScroll();
+  }
+  if (!deferred) {
+    requestAnimationFrame(() => {
+      if (textarea.isConnected && textarea.offsetWidth !== textareaWidth) {
+        resizeTextarea(textarea, hidden, container, true);
+      }
+    });
   }
 };
 
@@ -410,7 +422,11 @@ export const resizeTextarea = (textarea: HTMLTextAreaElement, hidden: HTMLDivEle
  */
 export const resetTextareaValue = (textarea: HTMLTextAreaElement, hidden: HTMLDivElement, container: HTMLDivElement, bar: HTMLDivElement, value?: string) => {
   textarea.value = value || '';
+  // Restoring a draft starts at the top. Otherwise assigning value leaves the
+  // caret at the end, and resizing or focusing scrolls to the last lines.
+  textarea.setSelectionRange(0, 0);
   resizeTextarea(textarea, hidden, container);
+  textarea.scrollTop = 0;
 };
 
 const isComposingInput = (e: KeyboardEvent): boolean => e.isComposing || e.keyCode === 229;
@@ -515,7 +531,7 @@ export interface ReplyMessageInfo {
   senderUserId: string;
   senderUserName: string;
   digest: string;
-  thumbnail?: string;
+  isEdited: boolean;
 }
 
 export const createReplyMessageInfo = (): ReplyMessageInfo | undefined => {
@@ -529,15 +545,5 @@ export const createReplyMessageInfo = (): ReplyMessageInfo | undefined => {
   if (messageType === MessageType.FILE) {
     digest += ` ${(content as FileMessageContent).name}`;
   }
-  let thumbnail: string | undefined;
-  switch (messageType) {
-    case MessageType.IMAGE:
-      thumbnail = (content as ImageMessageContent).thumbnailBase64
-      // Falls through: image and short-video message shapes both expose a thumbnail.
-    case MessageType.SHORT_VIDEO:
-      thumbnail = (content as ShortVideoMessageContent).thumbnailBase64
-      break;
-    }
-  thumbnail = thumbnail ? `data:image/png;base64,${thumbnail}` : undefined;
-  return { senderUserId, senderUserName, digest, thumbnail };
+  return { senderUserId, senderUserName, digest, isEdited: msg.editTimestamp !== undefined };
 }

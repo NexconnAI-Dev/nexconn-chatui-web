@@ -21,6 +21,11 @@ import { SpeechToTextStore } from '../modules/SpeechToTextStore';
 import { ConfirmEvent, ConnectionStatusChangeEvent, EventDefined, InnerEvent, ChatUIEvents } from './EventDefined';
 import { ChannelDataModule } from '@lib/modules/conversation/ConversationDataModule';
 import { ChannelsItemModule } from '@lib/modules/conversation/ConversationItemModule';
+import { ChatUICommand } from '@lib/enums/ChatUICommand';
+
+const normalizeTimeWindow = (value: number | undefined, fallback: number): number => (
+  typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
+);
 
 /**
  * Application context bus.
@@ -70,6 +75,14 @@ export class ChatUIContext extends EventDispatcher<EventDefined> {
     return this._originUserId;
   }
 
+  public get isMessageReactionEnabled(): boolean {
+    return this.store.getCommandSwitch(ChatUICommand.MESSAGE_REACTION_ENABLED);
+  }
+
+  public get isShowMessageReactUsersEnabled(): boolean {
+    return this.store.getCommandSwitch(ChatUICommand.SHOW_MESSAGE_REACT_USERS);
+  }
+
   /** Current connection status */
   private _status: ConnectionStatus = ConnectionStatus.DISCONNECTED;
 
@@ -112,8 +125,8 @@ export class ChatUIContext extends EventDispatcher<EventDefined> {
     super();
 
     this.modalContainerId = _opts.modalContainerId || '';
-    this.allowedToRecallTime = _opts.allowedToRecallTime || 120;
-    this.allowedToReEditTime = _opts.allowedToReEditTime || 60;
+    this.allowedToRecallTime = normalizeTimeWindow(_opts.allowedToRecallTime, 120);
+    this.allowedToReEditTime = normalizeTimeWindow(_opts.allowedToReEditTime, 60);
 
     this.store = new ChatUIStore(logger);
 
@@ -204,6 +217,7 @@ export class ChatUIContext extends EventDispatcher<EventDefined> {
   public destroy() {
     NCEngine.removeConnectionStatusHandler('ui-context-connection-status-handler');
 
+    this.audioPlayer.destroy();
     this.i18n.destroy();
     this.appData.destroy();
     this.message.destroy();

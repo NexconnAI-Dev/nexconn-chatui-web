@@ -90,8 +90,8 @@ export class UserCache extends BasicCache<ICacheUserProfile, ChatUIUserProfile> 
     let changed = false;
 
     if (cacheProfile) {
-      if (!this._isSameUserProfile(cacheProfile, profile)) {
-        // Update cached data.
+      if (cacheProfile.usingDefault || !this._isSameUserProfile(cacheProfile, profile)) {
+        // A confirmed profile replaces the default state even when its fields match.
         this._updateCacheUserProfile(cacheProfile, profile);
         changed = true;
       }
@@ -167,7 +167,7 @@ export class UserCache extends BasicCache<ICacheUserProfile, ChatUIUserProfile> 
     const { userId, name, avatarUrl: portraitUri } = profile;
 
     let cacheProfile = this._cache.get(userId);
-    if (cacheProfile && this._isSameUserProfile(cacheProfile, profile)) {
+    if (cacheProfile && !cacheProfile.usingDefault && this._isSameUserProfile(cacheProfile, profile)) {
       this.logger.warn(
         LogTag.A_UPDATE_USER_PROFILE_R,
         `user profile not changed: ${userId}`,

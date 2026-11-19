@@ -38,6 +38,14 @@ export class EventDispatcher<T> {
     }
   }
 
+  private _removeListenerItem(type: string, item: Item): void {
+    const listeners = this._listeners.get(type);
+    const index = listeners?.indexOf(item) ?? -1;
+    if (listeners && index !== -1) {
+      listeners.splice(index, 1);
+    }
+  }
+
   removeEventListeners(type: string | keyof T): void {
     this._listeners.delete(type);
   }
@@ -73,19 +81,27 @@ export class EventDispatcher<T> {
       return;
     }
 
-    for (const { target, once, listener } of listeners) {
+    // Snapshot preserves registration order and prevents removals from skipping entries.
+    for (const item of [...listeners]) {
       if (event.isImmediatePropagationStopped()) {
         return;
+      }
+
+      // A listener removed during dispatch is no longer eligible to run.
+      if (!this._listeners.get(event.type)?.includes(item)) {
+        continue;
+      }
+
+      const { target, once, listener } = item;
+      // Consume one-shot listeners before invoking them so reentrant dispatch cannot call them twice.
+      if (once) {
+        this._removeListenerItem(event.type, item);
       }
 
       try {
         listener.call(target, event);
       } catch (error) {
         console.error(error);
-      }
-
-      if (once) {
-        this.removeEventListener(event.type, listener, target);
       }
     }
   }

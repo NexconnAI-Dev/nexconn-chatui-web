@@ -42,7 +42,7 @@ export class ModalDialogElement extends LitElement {
 
   private get dialogStyle() {
     const style: Record<string, string> = {
-      width: this.isH5 ? '80%' : `${this.width}px`,
+      width: this.isH5 ? 'var(--nc-chatui-modal-mobile-width, 80%)' : `${this.width}px`,
       margin: this.isH5 ? '0 auto' : '',
     };
     const height = this.width_height ?? -1;

@@ -9,9 +9,6 @@ export class CombineMessageElement extends LitElement {
     :host {
       display: block;
     }
-    .combine-message {
-      padding: 20px;
-    }
     .title {
       font-size: 16px;
       padding-bottom: 12px;

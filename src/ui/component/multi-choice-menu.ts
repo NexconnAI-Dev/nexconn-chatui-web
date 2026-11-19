@@ -72,6 +72,18 @@ export class MultiChoiceMenuElement extends LitElement {
     .button.cancel:hover .icon-wrapper {
       background-color: #D0DDFF;
     }
+    @media (max-width: 768px) {
+      .selected-count,
+      .button-label {
+        display: none;
+      }
+      .cancel {
+        margin-right: auto;
+      }
+      .icon-wrapper {
+        margin-bottom: 0;
+      }
+    }
   `;
 
   @property({ type: Number })
@@ -102,7 +114,7 @@ export class MultiChoiceMenuElement extends LitElement {
           @mouseleave=${() => { this.isCancelHover = false; }}
         >
           <div class="icon-wrapper">
-            <img src=${this.isCancelHover ? MULTI_CHOICE_MENU_CANCEL_BUTTON_HOVER_ICON : MULTI_CHOICE_MENU_CANCEL_ICON} alt="Cancel">
+            <img src=${this.isCancelHover ? MULTI_CHOICE_MENU_CANCEL_BUTTON_HOVER_ICON : MULTI_CHOICE_MENU_CANCEL_ICON} alt=${this.i18n.t('dialog.cancel.msg')}>
           </div>
         </div>
         <!-- Selected count -->
@@ -114,7 +126,7 @@ export class MultiChoiceMenuElement extends LitElement {
           @mouseleave=${() => { this.isMergeForwardHover = false; }}
         >
           <div class="icon-wrapper">
-            <img src=${this.isMergeForwardHover && this.count > 0 ? MSG_MENU_MERGE_FORWARD_HOVER_ICON : MSG_MENU_MERGE_FORWARD_ICON} alt="Forward" style="opacity: ${this.count === 0 ? 0.4 : 1}">
+            <img src=${this.isMergeForwardHover && this.count > 0 ? MSG_MENU_MERGE_FORWARD_HOVER_ICON : MSG_MENU_MERGE_FORWARD_ICON} alt=${this.i18n.t('multi-choice.menu.merge-forward')} style="opacity: ${this.count === 0 ? 0.4 : 1}">
           </div>
           <span class="button-label">${this.i18n.t('multi-choice.menu.merge-forward')}</span>
         </div>
@@ -125,7 +137,7 @@ export class MultiChoiceMenuElement extends LitElement {
           @mouseleave=${() => { this.isForwardHover = false; }}
         >
           <div class="icon-wrapper">
-            <img src=${this.isForwardHover && this.count > 0 ? MSG_MENU_FORWARD_HOVER_ICON : MSG_MENU_FORWARD_ICON} alt="Forward" style="opacity: ${this.count === 0 ? 0.4 : 1}">
+            <img src=${this.isForwardHover && this.count > 0 ? MSG_MENU_FORWARD_HOVER_ICON : MSG_MENU_FORWARD_ICON} alt=${this.i18n.t('multi-choice.menu.forward-item-by-item')} style="opacity: ${this.count === 0 ? 0.4 : 1}">
           </div>
           <span class="button-label">${this.i18n.t('multi-choice.menu.forward-item-by-item')}</span>
         </div>

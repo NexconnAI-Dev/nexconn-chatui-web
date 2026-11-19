@@ -27,26 +27,39 @@ export interface HDVoiceMessageComponentProps {
 
 export class HDVoiceMessageElement extends LitElement {
   static styles = css`
-    :host { display: block; }
+    :host {
+      display: block;
+      max-width: 100%;
+      min-width: 0;
+    }
     .voice {
       display: flex;
       align-items: center;
-      padding: 20px;
       gap: 10px;
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
     }
     .control {
       width: 20px;
       height: 20px;
+      flex: 0 0 20px;
       cursor: pointer;
     }
     .progress {
+      width: 160px;
       height: 22px;
       display: flex;
       align-items: center;
+      flex: 0 1 auto;
+      min-width: 0;
     }
     .line {
-      margin-right: 5px;
+      /* Scale the original 5px spacing with the 160px waveform width. */
+      margin-right: 3.125%;
       width: 3px;
+      min-width: 0;
+      flex: 1 1 3px;
       animation: bounce-in 2s;
       background: #020814;
     }
@@ -56,6 +69,8 @@ export class HDVoiceMessageElement extends LitElement {
     }
     .time {
       font-size: 14px;
+      flex: 0 0 auto;
+      white-space: nowrap;
     }
   `;
 

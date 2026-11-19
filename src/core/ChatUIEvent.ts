@@ -24,6 +24,9 @@ export class ChatUIEvent<T extends string, D=void, R = void> {
    */
   public readonly data: D;
 
+  /**
+   * @protected Internal use only
+   */
   constructor(
     /**
      * Event type

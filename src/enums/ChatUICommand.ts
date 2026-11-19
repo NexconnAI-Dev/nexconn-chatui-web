@@ -41,4 +41,24 @@ export enum ChatUICommand {
    * - false - Disable (Default)
    */
   DELETE_MESSAGES_WHILE_DELETE_CHANNEL = 'DELETE_MESSAGES_WHILE_DELETE_CHANNEL',
+  /**
+   * Message reaction feature toggle
+   * - true - Enable
+   * - false - Disable (Default)
+   */
+  MESSAGE_REACTION_ENABLED = 'MESSAGE_REACTION_ENABLED',
+  /**
+   * Show reacting-user names in message reaction chips
+   * - true - Show names
+   * - false - Show counts (Default)
+   *
+   * Requires MESSAGE_REACTION_ENABLED.
+   */
+  SHOW_MESSAGE_REACT_USERS = 'SHOW_MESSAGE_REACT_USERS',
+  /**
+   * Message editing feature toggle
+   * - true - Enable
+   * - false - Disable (Default)
+   */
+  MESSAGE_EDIT_ENABLED = 'MESSAGE_EDIT_ENABLED',
 }

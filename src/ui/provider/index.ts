@@ -13,6 +13,7 @@ import { ModalAlertProvider } from './modal/modal-alert-provider';
 import { ModalForwardingProvider } from './modal/modal-forwarding-provider';
 import { ModalMediaMessageProvider } from './modal/modal-media-message-provider';
 import { ModalCombineProvider } from './modal/modal-combine-provider';
+import { ModalReactionsDetailProvider } from './modal/modal-reactions-detail-provider';
 import { ScrollbarProvider } from './scrollbar-provider';
 import { ChannelDetailBarProvider } from './channel-detail-bar-provider';
 import { MultiChoiceMenuProvider } from './multi-choice-menu-provider';
@@ -23,6 +24,9 @@ import { ChatUIAppProvider } from './chat-ui-app-provider';
 import { ChannelListProvider } from './channel-list-provider';
 import { InputProvider } from './input-provider';
 import { MessageListProvider } from './message-list-provider';
+import { MessageReactionsProvider } from './message-reactions-provider';
+import { MessageEditProvider } from './message-edit-provider';
+import { ReactionEmojiPanelProvider } from './reaction-emoji-panel-provider';
 
 /**
  * Provider component tag definitions.
@@ -37,6 +41,7 @@ export const InnerProviderTag = {
   MODAL_FORWARDING_PROVIDER: 'nc-modal-forwarding-provider',
   MODAL_MEDIA_MESSAGE_PROVIDER: 'nc-modal-media-message-provider',
   MODAL_COMBINE_MESSAGE_PROVIDER: 'nc-modal-combine-message-provider',
+  MODAL_REACTIONS_DETAIL_PROVIDER: 'nc-modal-reactions-detail-provider',
   MODAL_TAKE_PHOTO_PROVIDER: 'nc-modal-take-photo-provider',
   CHANNEL_LIST_CONTAINER_PROVIDER: 'nc-channel-list-container-provider',
   CHANNEL_LIST_PROVIDER: 'nc-channel-list-provider',
@@ -51,6 +56,9 @@ export const InnerProviderTag = {
   FileTransferCtrlProvider: 'nc-file-transfer-ctrl-provider',
   APP_PROVIDER: 'nc-chat-ui-app-provider',
   TOAST_PROVIDER: 'nc-toast-provider',
+  MESSAGE_REACTIONS_PROVIDER: 'nc-message-reactions-provider',
+  MESSAGE_EDIT_PROVIDER: 'nc-message-edit-provider',
+  REACTION_EMOJI_PANEL_PROVIDER: 'nc-reaction-emoji-panel-provider',
 };
 
 /**
@@ -70,6 +78,7 @@ export const providers: { [key: string]: CustomElementConstructor } = {
   [InnerProviderTag.MODAL_FORWARDING_PROVIDER]: ModalForwardingProvider,
   [InnerProviderTag.MODAL_MEDIA_MESSAGE_PROVIDER]: ModalMediaMessageProvider,
   [InnerProviderTag.MODAL_COMBINE_MESSAGE_PROVIDER]: ModalCombineProvider,
+  [InnerProviderTag.MODAL_REACTIONS_DETAIL_PROVIDER]: ModalReactionsDetailProvider,
   [InnerProviderTag.SCROLLBAR_PROVIDER]: ScrollbarProvider,
   [InnerProviderTag.CHANNEL_DETAIL_BAR_PROVIDER]: ChannelDetailBarProvider,
   [InnerProviderTag.MULTI_CHOICE_MENU_PROVIDER]: MultiChoiceMenuProvider,
@@ -80,4 +89,7 @@ export const providers: { [key: string]: CustomElementConstructor } = {
   [InnerProviderTag.CHANNEL_LIST_PROVIDER]: ChannelListProvider,
   [InnerProviderTag.InputProvider]: InputProvider,
   [InnerProviderTag.MESSAGLISTPROVIDER]: MessageListProvider,
+  [InnerProviderTag.MESSAGE_REACTIONS_PROVIDER]: MessageReactionsProvider,
+  [InnerProviderTag.MESSAGE_EDIT_PROVIDER]: MessageEditProvider,
+  [InnerProviderTag.REACTION_EMOJI_PANEL_PROVIDER]: ReactionEmojiPanelProvider,
 };

@@ -3,14 +3,17 @@ import {
   MSG_MENU_REPLY_ICON, MSG_MENU_SELECT_ICON, MSG_MENU_FORWARD_ICON,
   MSG_MENU_STT_ICON,
   MSG_MENU_CANCEL_STT_ICON,
+  MSG_MENU_EDIT_ICON,
+  MSG_MENU_REACTIONS_ICON,
 } from '../assets';
-import { ChatUIMessageModel } from '@lib/models/NCUIMessageModel';
+import { ChatUIMessageEditStatus, ChatUIMessageModel } from '@lib/models/NCUIMessageModel';
 import { ChatUIModule } from './ChatUIModule';
 import { MessageType, ChannelType } from '@nexconn/chat';
 import { SpeechToTextStore } from './SpeechToTextStore';
 import { NCEngine } from '@nexconn/chat';
 import { MessageDirection } from '@nexconn/chat';
 import { SentStatus } from '@nexconn/chat';
+import { ChatUICommand } from '@lib/enums/ChatUICommand';
 
 /**
  * Message context menu item IDs
@@ -19,6 +22,8 @@ import { SentStatus } from '@nexconn/chat';
 export enum MessageMenuID {
   /** Reply/Quote message */
   REPLY = 'message.menu.item.reply',
+  /** React to message */
+  REACTIONS = 'message.menu.item.reactions',
   /** Multi-select mode */
   MULIT_CHOICE = 'message.menu.item.multi.choice',
   /** Copy message text */
@@ -29,6 +34,8 @@ export enum MessageMenuID {
   SPEECH_TO_TEXT = 'message.menu.item.speech.to.text',
   /** Cancel voice-to-text conversion */
   CANCEL_SPEECH_TO_TEXT = 'message.menu.item.cancel.speech.to.text',
+  /** Edit message */
+  EDIT = 'message.menu.item.edit',
   /** Delete message for me */
   DELETE_FOR_ME = 'message.menu.item.delete.for.me',
   /** Delete message for all */
@@ -66,6 +73,8 @@ export interface MessageMenuItem {
 
 const cloneMsgMenu = (menu: MessageMenuItem[]): MessageMenuItem[] => menu.map((item) => ({ ...item }));
 
+export const canReactToMessage = (message: ChatUIMessageModel): boolean => message.sentStatus === SentStatus.SENT;
+
 export class MessageMenu extends ChatUIModule {
   private _menu: MessageMenuItem[] = this._createDefaultMenu();
   private _speechToTextStore?: SpeechToTextStore;
@@ -91,7 +100,12 @@ export class MessageMenu extends ChatUIModule {
   }
 
   getMenu(message: ChatUIMessageModel): MessageMenuItem[] {
-    return this._menu.filter((item) => !item.filter || item.filter(message));
+    return this._menu.filter((item) => {
+      if (item.id === MessageMenuID.REACTIONS && !this.ctx.isMessageReactionEnabled) {
+        return false;
+      }
+      return !item.filter || item.filter(message);
+    });
   }
 
   public cloneMessageMenu(): MessageMenuItem[] {
@@ -176,6 +190,12 @@ export class MessageMenu extends ChatUIModule {
         return enableTypes.includes(messageType);
       }
     }
+    /** React to message. */
+    const reactionMessage: MessageMenuItem = {
+      id: MessageMenuID.REACTIONS,
+      icon: MSG_MENU_REACTIONS_ICON,
+      filter: canReactToMessage,
+    }
     /** Copy. */
     const copyMessage: MessageMenuItem = {
       id: MessageMenuID.COPY,
@@ -251,10 +271,46 @@ export class MessageMenu extends ChatUIModule {
       icon: MSG_MENU_CANCEL_STT_ICON,
       filter: (message) => speechToTextFilter(message) && (!!this._speechToTextStore?.hasConverted(message.messageId)),
     }
+    /** Edit an eligible outgoing text or reference message. */
+    const editMessage: MessageMenuItem = {
+      id: MessageMenuID.EDIT,
+      icon: MSG_MENU_EDIT_ICON,
+      filter: (message) => {
+        if (!ctx.store.getCommandSwitch(ChatUICommand.MESSAGE_EDIT_ENABLED)) {
+          return false;
+        }
+
+        const activeMessageId = ctx.channelModule.getOpenedChannelModel()?.updatingMessageUId;
+        if (
+          (activeMessageId && activeMessageId === message.messageId)
+          || message.editStatus === ChatUIMessageEditStatus.UPDATING
+        ) {
+          return false;
+        }
+
+        if (
+          !ctx.userId
+          || message.senderUserId !== ctx.userId
+          || (message.sentStatus !== SentStatus.SENT && message.sentStatus !== SentStatus.READ)
+          || (message.messageType !== MessageType.TEXT && message.messageType !== MessageType.REFERENCE)
+        ) {
+          return false;
+        }
+
+        const editWindowMinutes = NCEngine.getAppSettings().data?.messageModifiableMinutes;
+        if (typeof editWindowMinutes !== 'number' || editWindowMinutes <= 0) {
+          return false;
+        }
+
+        return Date.now() - message.sentTime < editWindowMinutes * 60 * 1000;
+      },
+    };
     return [
+      editMessage,
       deleteMessaageForAll,
       deleteMessaageForMe,
       replyMessage,
+      reactionMessage,
       copyMessage,
       forwardMessage,
       multiChoiceMessage,

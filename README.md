@@ -55,6 +55,8 @@ pnpm add @nexconn/chatui @nexconn/engine @nexconn/chat lit
 
 Use versions of `@nexconn/engine` and `@nexconn/chat` that are compatible with the ChatUI release you install. These packages are closed-source Nexconn dependencies maintained and published through npm; their licensing is separate from the Apache-2.0 license for ChatUI.
 
+ChatUI is published as ESM only. Use `import` with an ESM-compatible browser bundler such as Vite, Rollup, or Webpack 5. CommonJS `require('@nexconn/chatui')` is not supported.
+
 ## Quick Start
 
 ```ts
@@ -138,6 +140,8 @@ pnpm run build:apidoc
 ```
 
 The generated API documentation is written to `release/apidoc/`.
+
+The library outputs `release/npm/dist/index.js` and `index.d.ts`.
 
 ## Release Notes
 

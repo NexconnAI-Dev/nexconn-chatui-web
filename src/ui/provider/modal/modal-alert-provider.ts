@@ -1,12 +1,13 @@
 import { LitElement, html, css } from 'lit';
-import { state } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
 import { I18nController } from '../../i18n/lit';
-import { ctx } from '../context';
-import { AlertEvent, ChatUIEvents } from '@lib/core/EventDefined';
 
 export class ModalAlertProvider extends LitElement {
   static styles = css`
     :host { display: block; }
+    nc-modal-dialog {
+      --nc-chatui-modal-mobile-width: 90%;
+    }
     .nc-chatui-modal-dialog-header {
       font-size: 14px;
       border-bottom: 1px solid #EAEAEA;
@@ -39,23 +40,9 @@ export class ModalAlertProvider extends LitElement {
     }
   `;
 
-  @state() private declare content: string;
+  @property({ attribute: false }) public declare content: string;
 
   private i18n = new I18nController(this);
-
-  private _onAlertEvent = (e: AlertEvent) => {
-    this.content = e.data;
-  };
-
-  connectedCallback() {
-    super.connectedCallback();
-    ctx().addEventListener(ChatUIEvents.ALERT_EVENT, this._onAlertEvent);
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    ctx().removeEventListener(ChatUIEvents.ALERT_EVENT, this._onAlertEvent);
-  }
 
   private handleCancel() {
     this.dispatchEvent(new CustomEvent('cancel', { bubbles: true, composed: true }));

@@ -1,6 +1,6 @@
 {
   "name": "@nexconn/chatui",
-  "version": "26.2.5",
+  "version": "26.5.0",
   "private": true,
   "license": "Apache-2.0",
   "repository": {
@@ -43,8 +43,8 @@
     "vite": "^4.1.4"
   },
   "dependencies": {
-    "@nexconn/chat": "^26.2.1",
-    "@nexconn/engine": "^26.2.1",
+    "@nexconn/chat": "~26.5.0",
+    "@nexconn/engine": "~26.5.0",
     "lit": "^3.3.2"
   },
   "packageManager": "pnpm@9.15.1+sha512.1acb565e6193efbebda772702950469150cf12bcc764262e7587e71d19dc98a423dff9536e57ea44c49bdf790ff694e83c27be5faa23d67e0c033b583be4bfcf"

@@ -9,9 +9,16 @@ import { ImageMessageContent } from '@nexconn/chat';
 
 export class ImageMessageElement extends LitElement {
   static styles = css`
+    :host {
+      display: block;
+      max-width: 100%;
+    }
     .thumbnail, .marked {
       width: 247px;
+      max-width: 100%;
       max-height: 400px;
+      height: auto;
+      box-sizing: border-box;
       border-radius: 10px;
       border: 1px solid #E4E7ED;
     }

@@ -10,6 +10,7 @@ export class ReadReceiptModalElement extends LitElement {
     :host { display: block; }
     .read-receipt-popover {
       position: absolute;
+      overflow: hidden;
       background-color: #fff;
       border-radius: 6px;
       box-shadow: 0px 5px 16px 0px #00000014;
@@ -19,10 +20,11 @@ export class ReadReceiptModalElement extends LitElement {
     .read-receipt-content {
       display: flex;
       flex-direction: row;
-      max-height: 420px;
+      max-height: inherit;
     }
     .read-receipt-column {
       flex: 1;
+      min-height: 0;
       display: flex;
       flex-direction: column;
       border-right: 1px solid #E5E5E5;
@@ -31,19 +33,20 @@ export class ReadReceiptModalElement extends LitElement {
       border-right: none;
     }
     .read-receipt-title {
+      flex-shrink: 0;
       padding: 15px 12px 6px 12px;
       font-size: 14px;
       color: #0E1012;
     }
     .read-receipt-list-wrapper {
       flex: 1;
+      min-height: 0;
       position: relative;
-      max-height: 380px;
       overflow: hidden;
     }
     .read-receipt-list {
       height: 100%;
-      overflow-y: scroll;
+      overflow-y: auto;
       padding: 0;
       scrollbar-width: none;
       padding-bottom: 10px;
@@ -100,9 +103,16 @@ export class ReadReceiptModalElement extends LitElement {
   @property({ type: Boolean }) declare visible: boolean;
   @property({ type: Array }) declare readUsers: any[];
   @property({ type: Array }) declare unreadUsers: any[];
+  @property({ type: Number }) declare readTotalCount: number;
+  @property({ type: Number }) declare unreadTotalCount: number;
   @property({ type: Boolean }) declare readLoading: boolean;
   @property({ type: Boolean }) declare unreadLoading: boolean;
-  @property({ type: Object }) declare position: { top: number; left: number; anchor?: string } | undefined;
+  @property({ type: Object }) declare position: {
+    top: number;
+    left: number;
+    anchor?: string;
+    maxHeight?: number;
+  } | undefined;
 
   @query('.read-receipt-list.read') private declare readListEl: HTMLDivElement;
   @query('.read-receipt-list.unread') private declare unreadListEl: HTMLDivElement;
@@ -113,14 +123,6 @@ export class ReadReceiptModalElement extends LitElement {
   @state() private declare unreadSizeHeight: number;
   @state() private declare unreadMoveY: number;
   @state() private declare unreadRatioY: number;
-
-  private get readCount(): number {
-    return this.readUsers.length;
-  }
-
-  private get unreadCount(): number {
-    return this.unreadUsers.length;
-  }
 
   private readResizeObserver: ResizeObserver | null = null;
   private unreadResizeObserver: ResizeObserver | null = null;
@@ -241,7 +243,7 @@ export class ReadReceiptModalElement extends LitElement {
   }
 
   private getPopoverStyle(): string {
-    if (!this.position) return '';
+    if (!this.position) return 'max-height: 420px;';
     const anchor = this.position.anchor || 'top-right';
     const transforms: Record<string, string> = {
       'top-right': 'translateX(-100%)',
@@ -252,7 +254,8 @@ export class ReadReceiptModalElement extends LitElement {
       'bottom-left': 'translateY(-100%)',
     };
     const transform = transforms[anchor] ?? '';
-    return `top: ${this.position.top}px; left: ${this.position.left}px;${transform ? ` transform: ${transform};` : ''}`;
+    const maxHeight = Math.max(0, this.position.maxHeight ?? 420);
+    return `top: ${this.position.top}px; left: ${this.position.left}px; max-height: ${maxHeight}px;${transform ? ` transform: ${transform};` : ''}`;
   }
 
   private truncateName(name: string, maxLength = 10): string {
@@ -276,7 +279,7 @@ export class ReadReceiptModalElement extends LitElement {
         <div class="read-receipt-content">
           <!-- Read list -->
           <div class="read-receipt-column">
-            <div class="read-receipt-title">${this.i18n.t('message.list.read-receipt.tooltip.read-count', this.readCount)}</div>
+            <div class="read-receipt-title">${this.i18n.t('message.list.read-receipt.tooltip.read-count', this.readTotalCount)}</div>
             <div class="read-receipt-list-wrapper">
               <div class="read-receipt-list read" @scroll=${(e: Event) => this.handleScroll(e, 'read')}>
                 <ul class="read-receipt-ul">
@@ -307,7 +310,7 @@ export class ReadReceiptModalElement extends LitElement {
           </div>
           <!-- Unread list -->
           <div class="read-receipt-column">
-            <div class="read-receipt-title">${this.i18n.t('message.list.read-receipt.tooltip.unread-count', this.unreadCount)}</div>
+            <div class="read-receipt-title">${this.i18n.t('message.list.read-receipt.tooltip.unread-count', this.unreadTotalCount)}</div>
             <div class="read-receipt-list-wrapper">
               <div class="read-receipt-list unread" @scroll=${(e: Event) => this.handleScroll(e, 'unread')}>
                 <ul class="read-receipt-ul">

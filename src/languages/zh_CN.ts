@@ -61,6 +61,7 @@ const entries: LanguagePackEntries = {
   'channel.menu.item.remove': '删除',
 
   'message.menu.item.reply': '回复',
+  'message.menu.item.reactions': '表情回复',
   'message.menu.item.multi.choice': '多选',
   'message.menu.item.copy': '复制',
   'message.menu.item.forward': '转发',
@@ -68,6 +69,7 @@ const entries: LanguagePackEntries = {
   'message.menu.item.delete.for.all': '撤回',
   'message.menu.item.speech.to.text': '转文字',
   'message.menu.item.cancel.speech.to.text': '取消转文字',
+  'message.menu.item.edit': '编辑',
   'message.speech.to.text.failed': '语音转换失败',
   'message.speech.to.text.empty': ' ',
   'message.speech.to.text.unsupported': '此语音消息不支持转文字功能',
@@ -92,12 +94,29 @@ const entries: LanguagePackEntries = {
   'alert.send.message.maxcount': '内容超过 {0} 字, 请删除部分内容后再尝试发送',
   'alert.message-deleted': '消息被删除',
   'alert.channel.list.not.ready': '会话列表仍在加载中, 请稍后再试',
+  'alert.reaction.limit.reached': '回应已达上限，无法继续添加',
+  'alert.reaction.failed': '消息回应失败，请稍后再试',
+  'alert.message.edit.failed': '消息更新失败，请重试',
+  'alert.message.edit.discarded': '已取消编辑消息',
+  'alert.message.edit.recalled': '消息已撤回，无法进行编辑',
+  'alert.message.edit.switch': '正在编辑另一条消息，确定编辑当前消息后，则之前编辑的消息内容将丢失。',
+  'reaction.total.users': '{0}人',
+  'reaction.detail.title': '回应详情',
+  'reaction.detail.loading': '加载中...',
 
   'dialog.tips.msg': '提示',
   'dialog.cancel.msg': '取消',
   'dialog.confirm.msg': '确认',
   'dialog.forwarding.msg': '转发给',
   'dialog.forwarding.confirm': '发送',
+  'message.edit.cancel': '取消',
+  'message.edit.confirm': '保存',
+  'message.edit.edited': '已编辑',
+  'message.edit.updating': '更新中...',
+  'message.edit.retry': '更新失败，点击重试',
+  'message.edit.expired': '消息已超过可编辑时间',
+  'message.reference.edited': '已编辑',
+  'message.reference.deleted': '消息已删除',
 
   'take-photo.send-btn.label': '发送',
   'take-photo.cancel-btn.label': '取消',
@@ -113,13 +132,14 @@ const entries: LanguagePackEntries = {
   'private.combine-msg.signal.title': '{0} 的聊天记录',
   'group.combine-msg.title': '群聊的聊天记录',
   'combine-msg.chat-record': '聊天记录',
+  'combine-msg.load-failed': '聊天记录加载失败',
 
   'connection.status.disconnected': '已主动断开连接',
   'connection.status.connecting': '连接中...',
 
   // 提示框
-  'toast.forward.success': '转发成功',
   'toast.copy.success': '已复制',
+  'toast.copy.failed': '复制失败',
 };
 
 export default entries;

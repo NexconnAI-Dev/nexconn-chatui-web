@@ -114,7 +114,11 @@ export type ChannelsMenuItemClickEvent = ChatUIEvent<'CHANNELS_MENU_ITEM_CLICK',
 /**
  * Initial channel list rendering event
  */
-export type ChannelListFirstScreenRenderingEvent = ChatUIEvent<'CHANNELS_LIST_RESET', ChatUIChannelModel[]>;
+export interface ChannelListFirstScreenRenderingData {
+  list: ChatUIChannelModel[];
+  generation: number;
+}
+export type ChannelListFirstScreenRenderingEvent = ChatUIEvent<'CHANNELS_LIST_RESET', ChannelListFirstScreenRenderingData>;
 export type ChannelsItemOrderChangeEvent = ChatUIEvent<'CHANNELS_ITEM_ORDER_CHANGE', {
   order: number;
   model: ChatUIChannelModel;
@@ -122,6 +126,11 @@ export type ChannelsItemOrderChangeEvent = ChatUIEvent<'CHANNELS_ITEM_ORDER_CHAN
 export type ChannelListItemChangeEvent = ChatUIEvent<'CHANNELS_ITEM_CHANGE', ChatUIChannelModel[]>;
 export type ChannelsItemDelteedEvent = ChatUIEvent<'CHANNELS_ITEM_DELETED', ChatUIChannelModel[]>;
 export type MessageStateChangeEvent = ChatUIEvent<'MESSAGE_STATE_CHANGE', ChatUIMessageModel[]>;
+export interface ReactionDetailData {
+  message: ChatUIMessageModel;
+  reactionId: string;
+}
+export type ReactionDetailEvent = ChatUIEvent<'REACTIONS_DETAIL_EVENT', ReactionDetailData>;
 export type InsertNewMessagesEvent = ChatUIEvent<'INSERT_NEW_MESSAGES', ChatUIMessageModel[]>;
 export type RecvNewMessagesEvent = ChatUIEvent<'RECV_NEW_MESSAGES', ChatUIMessageModel[]>;
 export type MessagesDeletedEvent = ChatUIEvent<'MESSAGES_DELETED', DeleteMessageData[]>;
@@ -281,6 +290,8 @@ export interface EventDefined {
    * Merged message forwarding dialog event
    */
   COMBINE_MESSAGE_MODAL_EVENT: ChatUIEvent<'COMBINE_MESSAGE_MODAL_EVENT', ChatUIMessageModel>,
+  /** Message reaction user details dialog event */
+  REACTIONS_DETAIL_EVENT: ReactionDetailEvent,
   /**
    * Take photo dialog event
    */
@@ -461,6 +472,8 @@ export enum ChatUIEvents {
    * Merged message forwarding dialog event
    */
   COMBINE_MESSAGE_MODAL_EVENT = 'COMBINE_MESSAGE_MODAL_EVENT',
+  /** Message reaction user details dialog event */
+  REACTIONS_DETAIL_EVENT = 'REACTIONS_DETAIL_EVENT',
   /**
    * Message forwarding dialog event
    */

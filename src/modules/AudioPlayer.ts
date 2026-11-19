@@ -23,11 +23,14 @@ export class AudioPlayer extends ChatUIModule {
   protected _onDestroyUserCache(): void {
     this._audio.removeEventListener('ended', this._onEnded);
     this._audio.removeEventListener('timeupdate', this._onTimeUpdate);
-    this._audio.addEventListener('error', this._onError);
+    this._audio.removeEventListener('error', this._onError);
+    this.stop();
   }
 
   public destroy(): void {
-    throw new Error("Method not implemented.");
+    this.ctx.removeEventListener(InnerEvent.DESTROY_USER_CACHE, this._onDestroyUserCache, this);
+    this.ctx.removeEventListener(InnerEvent.INIT_USER_CACHE, this._onInitUserCache, this);
+    this._onDestroyUserCache();
   }
 
   private _onError = () => {
@@ -68,6 +71,17 @@ export class AudioPlayer extends ChatUIModule {
     this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.AUDIO_PLAY_EVENT, this.getCurrentState()), false);
   }
 
+  private _playAudio(): void {
+    const source = this._audio.src;
+    this._audio.play().catch((error: DOMException) => {
+      // Pausing or releasing the source can abort a pending play request.
+      if (error.name === 'AbortError' || this._status === 'stopped' || this._audio.src !== source) {
+        return;
+      }
+      this._onError();
+    });
+  }
+
   /**
    * Play audio.
    * @param url Audio URL.
@@ -78,7 +92,7 @@ export class AudioPlayer extends ChatUIModule {
     if ((this._messageUId && this._messageUId === messageUId) || (this._transactionId && this._transactionId === transactionId)) {
       // Resume playback.
       if (this._status === 'stopped') {
-        this._audio.play();
+        this._playAudio();
         this._status = "playing";
         this._onTimeUpdate();
       }
@@ -87,11 +101,11 @@ export class AudioPlayer extends ChatUIModule {
 
     this._status = 'playing';
     this._messageUId = messageUId;
-    this._transactionId = 0;
+    this._transactionId = transactionId ?? 0;
     this._progress = 0;
 
     this._audio.src = url;
-    this._audio.play();
+    this._playAudio();
     this._dispatch();
   }
 
@@ -106,7 +120,8 @@ export class AudioPlayer extends ChatUIModule {
 
     if (this._audio.src) {
       this._audio.pause();
-      this._audio.src = '';
+      this._audio.removeAttribute('src');
+      this._audio.load();
     }
     this._dispatch();
   }

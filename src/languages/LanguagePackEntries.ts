@@ -62,6 +62,7 @@ export interface LanguagePackEntries {
 
   // Message menu
   'message.menu.item.reply': string,
+  'message.menu.item.reactions': string,
   'message.menu.item.multi.choice': string,
   'message.menu.item.copy': string,
   'message.menu.item.forward': string,
@@ -69,6 +70,7 @@ export interface LanguagePackEntries {
   'message.menu.item.delete.for.all': string,
   'message.menu.item.speech.to.text': string,
   'message.menu.item.cancel.speech.to.text': string,
+  'message.menu.item.edit': string,
   'message.speech.to.text.failed': string,
   'message.speech.to.text.empty': string,
   'message.speech.to.text.unsupported': string,
@@ -95,12 +97,29 @@ export interface LanguagePackEntries {
   'alert.send.message.maxcount': string,
   'alert.message-deleted': string,
   'alert.channel.list.not.ready': string,
+  'alert.reaction.limit.reached': string,
+  'alert.reaction.failed': string,
+  'alert.message.edit.failed': string,
+  'alert.message.edit.discarded': string,
+  'alert.message.edit.recalled': string,
+  'alert.message.edit.switch': string,
+  'reaction.total.users': string,
+  'reaction.detail.title': string,
+  'reaction.detail.loading': string,
 
   'dialog.tips.msg': string,
   'dialog.cancel.msg': string,
   'dialog.confirm.msg': string,
   'dialog.forwarding.msg': string,
   'dialog.forwarding.confirm': string,
+  'message.edit.cancel': string,
+  'message.edit.confirm': string,
+  'message.edit.edited': string,
+  'message.edit.updating': string,
+  'message.edit.retry': string,
+  'message.edit.expired': string,
+  'message.reference.edited': string,
+  'message.reference.deleted': string,
 
   'take-photo.send-btn.label': string,
   'take-photo.cancel-btn.label': string,
@@ -116,11 +135,12 @@ export interface LanguagePackEntries {
   'group.combine-msg.title': string,
   'private.combine-msg.signal.title': string,
   'combine-msg.chat-record': string,
+  'combine-msg.load-failed': string,
 
   'connection.status.disconnected': string,
   'connection.status.connecting': string,
 
   // Toasts
-  'toast.forward.success': string,
   'toast.copy.success': string,
+  'toast.copy.failed': string,
 }

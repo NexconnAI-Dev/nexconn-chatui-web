@@ -29,6 +29,10 @@ export interface CustomMessageComponent {
    * Web Component class for the custom message element
    */
   elementClass: CustomElementClass;
+  /**
+   * Disables the bubble's standard content inset when the component owns its outer spacing.
+   */
+  disableDefaultBubblePadding?: boolean;
 }
 
 /**
@@ -140,7 +144,11 @@ export class UIModule {
         const { component } = param;
         // Add the `nc-c-` prefix so demo configuration detects Web Component tags consistently.
         const tagName = `nc-c-${component.tagName}`;
-        regMessageTypeComponentTag(param.messageType, tagName);
+        regMessageTypeComponentTag(
+          param.messageType,
+          tagName,
+          component.disableDefaultBubblePadding,
+        );
         this._customMessageComponents[tagName] = component.elementClass;
       }
     });

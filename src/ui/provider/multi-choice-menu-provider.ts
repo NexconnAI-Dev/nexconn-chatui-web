@@ -12,7 +12,7 @@ export class MultiChoiceMenuProvider extends LitElement {
 
   private async _handleForward(type: ModalForwardingType) {
     if (selectedMessages.value.length <= 0) return;
-    if (selectedMessages.value.length > 100 && type === ModalForwardingType.MERGE) {
+    if (selectedMessages.value.length > 100) {
       ctx().alert('alert.forward.over.length');
       return;
     }

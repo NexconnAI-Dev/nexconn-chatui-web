@@ -121,9 +121,12 @@ export const formatTxtMessageContent = (content: string) => {
   const hostReg = '(?!@)(?:[a-z0-9-@_]{1,36}\\.)+[a-z]{2,6}';
   const portReg = '(?:\\:\\d{1,5})?';
   const localhost = '(?:localhost)';
-  const pathReg = '(?:(?:/[a-zA-Z0-9.,;?\\\'+&%$#=~_\\-!()*\\|\\/]*)?)';
-  const urlRegex = new RegExp('(((https?):\/\/(?:(' + ipReg + ')|(' + hostReg + ')|' + localhost + ')' + portReg + pathReg + '))','ig');
-  const mailRegex = new RegExp('([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)','ig');
+  const pathReg = '(?:(?:/[a-zA-Z0-9.,;\\\'+&%$#=~_\\-!()*\\|\\/]*)?)';
+  const queryReg = '(?:\\?[a-zA-Z0-9.,;?:\\\'+&%$#=~_\\-!()*\\|\\/]*)?';
+  // Treat another protocol prefix as a URL boundary so adjacent links are split correctly.
+  const urlBoundaryReg = '(?=https?:\\/\\/|$|[^a-zA-Z0-9:]|:(?!\\/\\/))';
+  const urlRegex = new RegExp('(((https?):\/\/(?:(' + ipReg + ')|(' + hostReg + ')|' + localhost + ')' + portReg + pathReg + queryReg + '))' + urlBoundaryReg, 'ig');
+  const mailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/ig;
 
   type TxtMatch = { type: string; val: string; index: number };
   const conform2rule: TxtMatch[] = [];

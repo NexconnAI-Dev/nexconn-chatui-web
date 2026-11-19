@@ -6,6 +6,8 @@
 
 ## Install
 
+This package is ESM-only. Use `import` in your browser application with an ESM-compatible bundler such as Vite, Rollup, or Webpack 5. CommonJS `require('@nexconn/chatui')` is not supported.
+
 `@nexconn/chatui` expects the following packages at **runtime** (they are declared as peer dependencies and are **not** bundled with ChatUI):
 
 - `@nexconn/engine`

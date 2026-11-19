@@ -1,8 +1,6 @@
 import { LitElement, html, css } from 'lit';
-import { state } from 'lit/decorators.js';
+import { property } from 'lit/decorators.js';
 import { I18nController } from '../../i18n/lit';
-import { ctx } from '../context';
-import { ConfirmEvent, ChatUIEvents } from '@lib/core/EventDefined';
 
 export class ModalConfirmProvider extends LitElement {
   static styles = css`
@@ -44,23 +42,9 @@ export class ModalConfirmProvider extends LitElement {
     }
   `;
 
-  @state() private declare content: string;
+  @property({ attribute: false }) public declare content: string;
 
   private i18n = new I18nController(this);
-
-  private _onConfirmEvent = (e: ConfirmEvent) => {
-    this.content = e.data;
-  };
-
-  connectedCallback() {
-    super.connectedCallback();
-    ctx().addEventListener(ChatUIEvents.CONFIRM_EVENT, this._onConfirmEvent);
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    ctx().removeEventListener(ChatUIEvents.CONFIRM_EVENT, this._onConfirmEvent);
-  }
 
   private handleCancel() {
     this.dispatchEvent(new CustomEvent('cancel', { bubbles: true, composed: true }));

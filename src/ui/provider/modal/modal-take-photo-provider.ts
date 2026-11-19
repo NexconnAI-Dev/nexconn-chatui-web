@@ -121,7 +121,7 @@ export class ModalTakePhotoProvider extends LitElement {
   @state() private declare errormsg: string;
 
   private blob: Blob | null = null;
-  private capturing: Promise<MediaStream> | null = null;
+  private capturing: Promise<void> | null = null;
   private videoEl: HTMLVideoElement | null = null;
   private imageEl: HTMLImageElement | null = null;
   private containerEl: HTMLElement | null = null;
@@ -156,28 +156,41 @@ export class ModalTakePhotoProvider extends LitElement {
 
   private async takeStream() {
     if (this.capturing) return this.capturing;
+    this.errormsg = '';
     try {
-      this.capturing = navigator.mediaDevices.getUserMedia({
+      const capturing: Promise<void> = navigator.mediaDevices.getUserMedia({
         video: { width: 960, height: 720, aspectRatio: 4 / 3 }
+      }).then(stream => {
+        if (this.capturing !== capturing) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        this.stream = stream;
+      }, (error: Error) => {
+        if (this.capturing === capturing) {
+          this.errormsg = error.message;
+        }
+      }).finally(() => {
+        if (this.capturing === capturing) {
+          this.capturing = null;
+        }
       });
-      this.stream = await this.capturing;
+      this.capturing = capturing;
+      return capturing;
     } catch (error: any) {
       this.errormsg = error.message;
     }
   }
 
-  private async destroyStream() {
-    if (this.capturing) {
-      const mediaStream = await this.capturing;
-      mediaStream?.getTracks().forEach(track => track.stop());
-    }
+  private destroyStream() {
+    // Invalidate pending capture so a late stream is stopped instead of attached.
+    this.capturing = null;
     if (this.stream) {
       this.stream.getTracks().forEach(track => track.stop());
     }
     if (this.videoEl) {
       this.videoEl.srcObject = null;
     }
-    this.capturing = null;
     this.stream = null;
   }
 
@@ -243,6 +256,7 @@ export class ModalTakePhotoProvider extends LitElement {
     window.addEventListener('resize', this.resize);
     this.takeStream().then(async () => {
       await this.updateComplete;
+      if (!this.isConnected || !this.stream) return;
       if (this.videoEl) {
         this.videoEl.addEventListener('loadedmetadata', this.resize);
       }

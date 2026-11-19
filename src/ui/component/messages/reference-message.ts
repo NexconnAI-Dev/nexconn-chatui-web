@@ -1,6 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { property } from 'lit/decorators.js';
-import { Helper, ImageMessageContent, Message, MessageDirection, MessageType, ReferenceMessageContent, TextMessageContent } from '@nexconn/chat';
+import { Helper, ImageMessageContent, Message, MessageDirection, MessageType, ReferenceMessageContent, ReferenceMessageStatus, TextMessageContent } from '@nexconn/chat';
 import { formatBase64Image } from '@lib/helper';
 import { AUDIO_ICON, AUDIO_SELF_ICON } from '@lib/assets';
 import { I18nController } from '../../i18n/lit';
@@ -29,6 +29,10 @@ export class ReferenceMessageElement extends LitElement {
       color: #020814;
       min-width: 0;
     }
+    .reference-box.reference-unavailable .content,
+    .reference-box.reference-unavailable .desc {
+      color: #7C838E;
+    }
     .reference-box .content > img {
       flex-shrink: 0;
     }
@@ -39,11 +43,20 @@ export class ReferenceMessageElement extends LitElement {
       white-space: pre-wrap;
       padding: 4px 20px 20px 20px;
     }
+    .edited-marker {
+      margin-left: 4px;
+      color: #7C838E;
+      font-size: 12px;
+      white-space: nowrap;
+      -webkit-user-select: none;
+      user-select: none;
+    }
     .reference-hr-line {
       border: 1px solid #0000001A;
       margin: 0 10px;
     }
     .message-desc {
+      flex: 1;
       display: flex;
       box-sizing: border-box;
       flex-direction: column;
@@ -71,11 +84,14 @@ export class ReferenceMessageElement extends LitElement {
       white-space: nowrap;
     }
     .desc-text {
-      flex: 1;
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .desc > .edited-marker {
+      flex-shrink: 0;
+      margin-left: 0;
     }
     .thumbnail {
       flex-shrink: 0;
@@ -114,6 +130,10 @@ export class ReferenceMessageElement extends LitElement {
     const { content, direction: messageDirection, message } = this.message;
     // Unwrap the referenced message.
     const referencedMessage = Helper.unwrapReferenceMessage(message);
+    const referenceStatus = content.referMsgStatus;
+    const referenceUnavailable = referenceStatus === ReferenceMessageStatus.DELETE
+      || referenceStatus === ReferenceMessageStatus.RECALLED;
+    const referenceEdited = referenceStatus === ReferenceMessageStatus.MODIFIED;
     const { content: referMsg, messageType: referMsgType } = referencedMessage;
     const isSend = messageDirection === MessageDirection.SEND;
     const borderColor = isSend ? '#fff' : '#f5f5f5';
@@ -123,7 +143,7 @@ export class ReferenceMessageElement extends LitElement {
 
     return html`
       <div>
-        <div class="reference-box" style="border-color: ${borderColor}">
+        <div class="reference-box ${referenceUnavailable ? 'reference-unavailable' : ''}" style="border-color: ${borderColor}">
           <div class="header"></div>
           <div class="right">
             <div class="content">
@@ -134,16 +154,19 @@ export class ReferenceMessageElement extends LitElement {
                 <div class="desc">
                   <div class="reply-prefix">${reply}:</div>
                   ${
-                    !showReferenceImage
+                    referenceUnavailable
+                      ? html`<div class="desc-text">${this.i18n.t('message.reference.deleted')}</div>`
+                      : !showReferenceImage
                       ? html`
                       <div class="desc-text">
                         <span>${this.getReferenceContent(referencedMessage)}</span>
                         ${referMsgType === MessageType.FILE ? html`<span>${referMsg?.name}</span>` : ''}
-                      </div>`
+                      </div>
+                      ${referenceEdited ? html`<span class="edited-marker">(${this.i18n.t('message.reference.edited')})</span>` : ''}`
                       : ''
                   }
                   ${
-                    showReferenceImage
+                    showReferenceImage && !referenceUnavailable
                       ? html`<img class="thumbnail" src="${formatBase64Image((referMsg as ImageMessageContent)?.thumbnailBase64)}" alt="Thumbnail Image">`
                       : ''
                   }
@@ -153,7 +176,9 @@ export class ReferenceMessageElement extends LitElement {
           </div>
         </div>
         <div class="reference-hr-line"></div>
-        <div class="reference-content">${content.text}</div>
+        <div class="reference-content">${content.text}${this.message.editTimestamp !== undefined
+          ? html`<span class="edited-marker">(${this.i18n.t('message.edit.edited')})</span>`
+          : ''}</div>
       </div>
     `;
   }

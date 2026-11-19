@@ -11,11 +11,15 @@ import { ShortVideoMessageContent } from '@nexconn/chat';
 export class ShortVideoMessageElement extends LitElement {
   static styles = css`
     :host {
-      text-align: center;
+      display: block;
+      width: fit-content;
+      max-width: 100%;
     }
     .wraper {
       position: relative;
-      display: inline-block;
+      display: block;
+      /* A fixed cap also constrains the bubble's intrinsic width before percentage sizes resolve. */
+      max-width: 200px;
     }
     .wraper .time {
       position: absolute;
@@ -26,10 +30,12 @@ export class ShortVideoMessageElement extends LitElement {
       z-index: 2;
     }
     .wraper > img {
-      max-width: 200px;
+      display: block;
+      max-width: 100%;
+      height: auto;
+      box-sizing: border-box;
       border-radius: 10px;
       border: 1px solid #E4E7ED;
-      vertical-align: bottom;
     }
     .sight-mask {
       position: absolute;

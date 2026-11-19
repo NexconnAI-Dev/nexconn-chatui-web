@@ -11,8 +11,7 @@ export class ChatUIChannelModel {
 
   /**
    * Constructor for creating a channel model, internal use only
-   * @private Internal use only
-   * @hidden
+   * @protected Internal use only
    */
   constructor(channelIdentifier: ChannelIdentifier) {
     this.channelIdentifier = channelIdentifier;
@@ -31,6 +30,9 @@ export class ChatUIChannelModel {
   public avatarUrl: string = '';
 
   public draft: string = '';
+
+  /** Message ID whose inline edit control is currently visible, if any. */
+  public updatingMessageUId?: string;
 
   public latestMessage: null | ChatUIMessageModel = null;
 
@@ -57,6 +59,7 @@ export class ChatUIChannelModel {
     channel.name = this.name;
     channel.avatarUrl = this.avatarUrl;
     channel.draft = this.draft;
+    channel.updatingMessageUId = this.updatingMessageUId;
     channel.latestMessage = this.latestMessage ? this.latestMessage.clone() : null;
     channel.isPinned = this.isPinned;
     channel.noDisturbLevel = this.noDisturbLevel;

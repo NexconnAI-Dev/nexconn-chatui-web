@@ -15,20 +15,24 @@ import { Signal, DerivedSignal } from './signal';
  */
 export class SignalController implements ReactiveController {
   private _unsubscribers: Array<() => void> = [];
+  private _signals = new Set<Signal<any> | DerivedSignal<any>>();
+  private _connected = false;
 
   constructor(
     private host: ReactiveControllerHost,
     signals: Array<Signal<any> | DerivedSignal<any>> = []
   ) {
+    signals.forEach(signal => this._signals.add(signal));
     this.host.addController(this);
-    signals.forEach(s => this._watch(s));
   }
 
   /**
    * Adds a signal to watch.
    */
   watch(signal: Signal<any> | DerivedSignal<any>): void {
-    this._watch(signal);
+    if (this._signals.has(signal)) return;
+    this._signals.add(signal);
+    if (this._connected) this._watch(signal);
   }
 
   private _watch(signal: Signal<any> | DerivedSignal<any>): void {
@@ -36,9 +40,15 @@ export class SignalController implements ReactiveController {
     this._unsubscribers.push(unsub);
   }
 
-  hostConnected(): void {}
+  hostConnected(): void {
+    if (this._connected) return;
+    this._connected = true;
+    this._signals.forEach(signal => this._watch(signal));
+    this.host.requestUpdate();
+  }
 
   hostDisconnected(): void {
+    this._connected = false;
     this._unsubscribers.forEach(unsub => unsub());
     this._unsubscribers = [];
   }

@@ -51,88 +51,85 @@ export abstract class BasicCache<T extends ICachedData, D> {
    */
   protected abstract _dispatchUpdateEvent(datas: T[]): void;
 
-  private _requesting: Map<string, Promise<D[]>> = new Map();
+  private _requesting: Map<string, Promise<void>> = new Map();
 
   private _waitingList: Set<string> = new Set();
 
   private _waitingPromise: Promise<void> | undefined;
+  private _waitingTimer: ReturnType<typeof setTimeout> | undefined;
+  private _resolveWaiting: (() => void) | undefined;
+  private _generation = 0;
 
   /**
    * Add IDs to the pending list and wait until their requests complete.
    * @param ids
    */
-  private async _push2Waiting(ids: string[]): Promise<void> {
-    if (this._waitingPromise) {
-      // Append new IDs to the existing pending list.
-      ids.forEach((id) => this._waitingList.add(id));
-    } else {
+  private _push2Waiting(ids: string[]): Promise<void> {
+    ids.forEach((id) => this._waitingList.add(id));
+    if (!this._waitingPromise) {
       // Create a pending list and issue the request after 200 ms.
-      this._waitingList = new Set(ids);
       this._waitingPromise = new Promise((resolve) => {
-        setTimeout(() => {
+        this._resolveWaiting = resolve;
+        this._waitingTimer = setTimeout(() => {
           const list = [...this._waitingList];
           this._waitingList.clear();
-          this._request(list);
+          this._waitingTimer = undefined;
           this._waitingPromise = undefined;
-          resolve();
+          this._resolveWaiting = undefined;
+          void this._request(list).then(resolve);
         }, 200);
       });
     }
-
-    // Wait for the request to be issued.
-    await this._waitingPromise;
-    // Wait for the request to complete.
-    await Promise.all(ids.map((id) => this._requesting.get(id)!));
+    return this._waitingPromise;
   }
 
   /**
    * @param ids - ID list.
    */
-  private async _request(ids: string[]): Promise<void> {
-    const traceId = this.logger.createTraceId();
-
-    let promise: Promise<D[]> | undefined;
-    try {
-      this.logger.info(this.ReqStartTag, ids.join(","), traceId);
-      // Request data from the application.
-      promise = this._hook(ids);
-      // Track the request.
-      ids.forEach((id) => {
-        this._requesting.set(id, promise!);
-      });
-    } catch (error: any) {
-      this.logger.error(this.ReqFailedTag, error.message, traceId);
-      return;
-    }
-
-    const result: D[] = await promise;
-    if (result instanceof Array === false) {
-      this.logger.error(this.ReqFailedTag, "result must be a Array", traceId);
-      return;
-    }
-
-    const updateList: T[] = [];
-    const validResult: D[] = result.filter((data, index) => {
-      const bool = !this._isInvalid(data);
-      if (!bool) {
-        this.logger.warn(this.ReqFailedTag, `invalid value in position ${index}`, traceId);
-        // Log invalid fields for diagnosis, but omit profile because it may not be serializable.
-        console.error(`invalid value in position ${index}: `, data);
-      } else {
-        const { cached, changed } = this._checkAndUpdateCacheData(data);
-        if (changed) {
-          updateList.push(cached);
+  private _request(ids: string[]): Promise<void> {
+    const generation = this._generation;
+    const request = Promise.resolve().then(async () => {
+      if (generation !== this._generation) return;
+      const traceId = this.logger.createTraceId();
+      try {
+        this.logger.info(this.ReqStartTag, ids.join(","), traceId);
+        const result = await this._hook(ids);
+        if (generation !== this._generation) return;
+        if (!Array.isArray(result)) {
+          this.logger.error(this.ReqFailedTag, "result must be an Array", traceId);
+          return;
         }
+
+        const updateList: T[] = [];
+        const validResult = result.filter((data, index) => {
+          const bool = !this._isInvalid(data);
+          if (!bool) {
+            this.logger.warn(this.ReqFailedTag, `invalid value in position ${index}`, traceId);
+            // Log invalid fields for diagnosis, but omit profile because it may not be serializable.
+            console.error(`invalid value in position ${index}: `, data);
+          } else {
+            const { cached, changed } = this._checkAndUpdateCacheData(data);
+            if (changed) {
+              updateList.push(cached);
+            }
+          }
+          return bool;
+        });
+
+        if (updateList.length > 0) {
+          this._dispatchUpdateEvent(updateList);
+        }
+        this.logger.info(this.ReqSuccessTag, `valid value length: ${validResult.length}`, traceId);
+      } catch (error) {
+        this.logger.error(this.ReqFailedTag, String(error), traceId);
       }
-      return bool;
+    }).finally(() => {
+      ids.forEach((id) => {
+        if (this._requesting.get(id) === request) this._requesting.delete(id);
+      });
     });
-
-    // Dispatch an update event.
-    if (updateList.length > 0) {
-      this._dispatchUpdateEvent(updateList);
-    }
-
-    this.logger.info(this.ReqSuccessTag, `valid value length: ${validResult.length}`, traceId);
+    ids.forEach((id) => this._requesting.set(id, request));
+    return request;
   }
 
   /**
@@ -145,6 +142,7 @@ export abstract class BasicCache<T extends ICachedData, D> {
       return [];
     }
 
+    const generation = this._generation;
     const needRequestIds: string[] = ignoreCache
       ? ids.slice()
       : ids.filter((id) => {
@@ -179,7 +177,7 @@ export abstract class BasicCache<T extends ICachedData, D> {
     }
 
     // Read cached records again in the order of ids.
-    return this.getCache(ids, true);
+    return generation === this._generation ? this.getCache(ids, true) : [];
   }
 
   /**
@@ -251,6 +249,14 @@ export abstract class BasicCache<T extends ICachedData, D> {
   protected abstract _createDefaultCache(id: string, defaultProfile?: D): T;
 
   public clear(): void {
+    this._generation += 1;
     this._cache.clear();
+    this._requesting.clear();
+    this._waitingList.clear();
+    clearTimeout(this._waitingTimer);
+    this._waitingTimer = undefined;
+    this._waitingPromise = undefined;
+    this._resolveWaiting?.();
+    this._resolveWaiting = undefined;
   }
 }

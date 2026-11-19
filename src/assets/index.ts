@@ -17,6 +17,7 @@ import takePhotoSendIcon from './icon/take-photo/send.svg?raw';
 import inputPhotoIcon from './icon/input/icon-photo.svg?raw';
 import inputImageIcon from './icon/input/icon-images.svg?raw';
 import inputEmojiIcon from './icon/input/icon-emoji.svg?raw';
+import inputEmojiHoverIcon from './icon/input/icon-emoji-hover.svg?raw';
 import inputPlusIcon from './icon/input/icon-plus.svg?raw';
 import inputFilesIcon from './icon/input/icon-files.svg?raw';
 import inputSendIcon from './icon/input/send.svg?raw';
@@ -31,11 +32,13 @@ import convMenuDeleteIcon from './icon/conversation-menu/delete.svg?raw';
 import MsgMenuDeleteIcon from './icon/message-menu/delete.svg?raw';
 import MsgMenuCopyIcon from './icon/message-menu/copy.svg?raw';
 import MsgMenuReplyIcon from './icon/message-menu/reply.svg?raw';
+import MsgMenuReactionsIcon from './icon/message-menu/reactions.svg?raw';
 import MsgMenuSelectIcon from './icon/message-menu/select.svg?raw';
 import MsgMenuForwardIcon from './icon/message-menu/forward.svg?raw';
 import MsgMenuMergeForwardIcon from './icon/message-menu/merge-forward.svg?raw';
 import MsgMenuSTTIcon from './icon/message-menu/stt.svg?raw';
 import MsgMenuCancelSTTIcon from './icon/message-menu/stt-cancel.svg?raw';
+import MsgMenuEditIcon from './icon/message-menu/edit.svg?raw';
 import MsgMenuRecallIcon from './icon/message-menu/recall.svg?raw';
 import FileTypeAudioIcon from './icon/message/file-type/audio.svg?raw';
 import FileTypeExcelIcon from './icon/message/file-type/excel.svg?raw';
@@ -69,9 +72,15 @@ import SentStatusUnreadIcon from './icon/message/status-unread.svg?raw';
 import SentStatusSendingIcon from './icon/message/status-sending.svg?raw';
 import SentStatusUnreadChatIcon from './icon/message/status-unread-chat.svg?raw';
 import SentStatusSendingChatIcon from './icon/message/status-sending-chat.svg?raw';
+import MessageEditUpdatingIcon from './icon/message/edit-updating.svg?raw';
+import MessageEditFailedIcon from './icon/message/edit-failed.svg?raw';
 import HoverMenuIcon from './icon/hover-menu.svg?raw';
+import HoverReactionIcon from './icon/hover-reaction.svg?raw';
 
 const HoverMenuActiveIcon = HoverMenuIcon
+  .replace(/#E3E7EF/g, '#D0DDFF')
+  .replace(/#020814/g, '#0047FF');
+const HoverReactionActiveIcon = HoverReactionIcon
   .replace(/#E3E7EF/g, '#D0DDFF')
   .replace(/#020814/g, '#0047FF');
 
@@ -165,12 +174,15 @@ export const getFileTypeIconByName = (fileName: string): string => {
 };
 
 export const INPUT_ICON_EMOJI_HOVER_ICON = URL.createObjectURL(new Blob([emojiHoverIcon], { type: 'image/svg+xml' }));
+export const INPUT_ICON_EMOJI_EDIT_HOVER_ICON = URL.createObjectURL(new Blob([inputEmojiHoverIcon], { type: 'image/svg+xml' }));
 export const INPUT_ICON_IMAGES_HOVER_ICON = URL.createObjectURL(new Blob([imagesHoverIcon], { type: 'image/svg+xml' }));
 export const INPUT_ICON_FILES_HOVER_ICON = URL.createObjectURL(new Blob([filesHoverIcon], { type: 'image/svg+xml' }));
 export const INPUT_ICON_PHOTO_HOVER_ICON = URL.createObjectURL(new Blob([photoHoverIcon], { type: 'image/svg+xml' }));
 
 export const HOVER_MENU_ICON = URL.createObjectURL(new Blob([HoverMenuIcon], { type: 'image/svg+xml' }));
 export const HOVER_MENU_ACTIVE_ICON = URL.createObjectURL(new Blob([HoverMenuActiveIcon], { type: 'image/svg+xml' }));
+export const HOVER_REACTION_ICON = URL.createObjectURL(new Blob([HoverReactionIcon], { type: 'image/svg+xml' }));
+export const HOVER_REACTION_ACTIVE_ICON = URL.createObjectURL(new Blob([HoverReactionActiveIcon], { type: 'image/svg+xml' }));
 export const MODAL_CLOSE_ICON = URL.createObjectURL(new Blob([modalClose], { type: 'image/svg+xml' }));
 export const MODAL_DOWNLOAD_ICON = URL.createObjectURL(new Blob([modalDownload], { type: 'image/svg+xml' }));
 
@@ -203,6 +215,7 @@ export const TAKE_PHOTO_SEND_ICON = URL.createObjectURL(new Blob([takePhotoSendI
 export const MSG_MENU_DEELTE_ICON = URL.createObjectURL(new Blob([MsgMenuDeleteIcon], { type: 'image/svg+xml' }));
 export const MSG_MENU_COPY_ICON = URL.createObjectURL(new Blob([MsgMenuCopyIcon], { type: 'image/svg+xml' }));
 export const MSG_MENU_REPLY_ICON = URL.createObjectURL(new Blob([MsgMenuReplyIcon], { type: 'image/svg+xml' }));
+export const MSG_MENU_REACTIONS_ICON = URL.createObjectURL(new Blob([MsgMenuReactionsIcon], { type: 'image/svg+xml' }));
 export const MSG_MENU_SELECT_ICON = URL.createObjectURL(new Blob([MsgMenuSelectIcon], { type: 'image/svg+xml' }));
 export const MSG_MENU_FORWARD_ICON = URL.createObjectURL(new Blob([MsgMenuForwardIcon], { type: 'image/svg+xml' }));
 export const MSG_MENU_MERGE_FORWARD_ICON = URL.createObjectURL(new Blob([MsgMenuMergeForwardIcon], { type: 'image/svg+xml' }));
@@ -219,6 +232,7 @@ export const MSG_MENU_DELETE_HOVER_ICON = URL.createObjectURL(new Blob([msgMenuD
 export const MULTI_CHOICE_MENU_CANCEL_BUTTON_HOVER_ICON = URL.createObjectURL(new Blob([multiChoiceMenuCancelHoverIconForButton], { type: 'image/svg+xml' }));
 export const MSG_MENU_STT_ICON = URL.createObjectURL(new Blob([MsgMenuSTTIcon], { type: 'image/svg+xml' }));
 export const MSG_MENU_CANCEL_STT_ICON = URL.createObjectURL(new Blob([MsgMenuCancelSTTIcon], { type: 'image/svg+xml' }));
+export const MSG_MENU_EDIT_ICON = URL.createObjectURL(new Blob([MsgMenuEditIcon], { type: 'image/svg+xml' }));
 export const MSG_MENU_RECALL_ICON = URL.createObjectURL(new Blob([MsgMenuRecallIcon], { type: 'image/svg+xml' }));
 
 export const CHANNELS_MENU_PIN_ICON = URL.createObjectURL(new Blob([convMenuTopIcon], { type: 'image/svg+xml' }));
@@ -269,3 +283,5 @@ export const SENT_STATUS_UNREAD_ICON = URL.createObjectURL(new Blob([SentStatusU
 export const SENT_STATUS_SENDING_ICON = URL.createObjectURL(new Blob([SentStatusSendingIcon], { type: 'image/svg+xml' }));
 export const SENT_STATUS_UNREAD_CHAT_ICON = URL.createObjectURL(new Blob([SentStatusUnreadChatIcon], { type: 'image/svg+xml' }));
 export const SENT_STATUS_SENDING_CHAT_ICON = URL.createObjectURL(new Blob([SentStatusSendingChatIcon], { type: 'image/svg+xml' }));
+export const MESSAGE_EDIT_UPDATING_ICON = URL.createObjectURL(new Blob([MessageEditUpdatingIcon], { type: 'image/svg+xml' }));
+export const MESSAGE_EDIT_FAILED_ICON = URL.createObjectURL(new Blob([MessageEditFailedIcon], { type: 'image/svg+xml' }));

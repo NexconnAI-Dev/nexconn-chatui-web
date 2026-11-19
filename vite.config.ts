@@ -1,6 +1,5 @@
 import { resolve } from 'path';
 import { defineConfig } from 'vite';
-import { ModuleFormat } from 'rollup';
 import pack from './scripts/plugins/vite-plugin-pack.mjs';
 import { compileDefinedValues, mode } from './scripts/constants.mjs';
 
@@ -11,11 +10,8 @@ export default defineConfig({
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
-      fileName(format: ModuleFormat, entryName: string) {
-        return format === 'es' || format === 'esm' ? 'index.esm.js' : 'index.cjs.js';
-      },
-      name: 'NexconnChatUI',
-      formats: ['es', 'cjs'],
+      fileName: () => 'index.js',
+      formats: ['es'],
     },
     sourcemap: false,
     copyPublicDir: false,

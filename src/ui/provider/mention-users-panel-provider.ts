@@ -1,13 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { property } from 'lit/decorators.js';
 import { I18nController } from '../i18n/lit';
-
-type MentionedUser = {
-  name: string;
-  nickname?: string;
-  userId: string;
-  portraitUri: string;
-};
+import type { SelectedGroupMember } from './context';
 
 export class MentionUsersPanelProvider extends LitElement {
   static styles = css`
@@ -42,7 +36,7 @@ export class MentionUsersPanelProvider extends LitElement {
   `;
 
   @property({ type: Array })
-  declare members: MentionedUser[];
+  declare members: SelectedGroupMember[];
 
   @property({ type: Boolean })
   declare mentionAll: boolean;
@@ -59,7 +53,7 @@ export class MentionUsersPanelProvider extends LitElement {
         ` : ''}
         ${(this.members || []).map(item => html`
           <div class="div-item" @click=${() => this.dispatchEvent(new CustomEvent('mention', { detail: item.userId, bubbles: true, composed: true }))}>
-            ${item.portraitUri ? html`<img class="icon" src="${item.portraitUri}" alt="User Portrait"/>` : ''}
+            ${item.avatarUrl ? html`<img class="icon" src="${item.avatarUrl}" alt="User Portrait"/>` : ''}
             <span>${item.nickname || item.name}</span>
           </div>
         `)}

@@ -1,4 +1,29 @@
-import { ChannelIdentifier, Message, MessageReadReceiptInfo, SentStatus, MessageDirection, Helper, SendMessageParams } from "@nexconn/chat";
+import {
+  ChannelIdentifier,
+  Message,
+  MessageReaction,
+  MessageReadReceiptInfo,
+  SentStatus,
+  MessageDirection,
+  Helper,
+  SendMessageParams,
+} from '@nexconn/chat';
+
+/** Reaction summary stored on a ChatUI message. */
+export interface ChatUIMessageReaction extends Omit<MessageReaction, 'users'> {
+  /** At most ten unique user IDs, with the current user first when present. */
+  users: string[];
+}
+
+/** Message editing state stored on a chat message model. */
+export enum ChatUIMessageEditStatus {
+  /** An edit request is currently in progress. */
+  UPDATING = 'UPDATING',
+  /** The last edit request failed and can be retried or reopened. */
+  FAILED = 'FAILED',
+  /** The message has been updated and has an SDK update timestamp. */
+  SUCCESS = 'SUCCESS',
+}
 
 /**
  * Message model representing a single message in a conversation
@@ -24,6 +49,16 @@ export class ChatUIMessageModel<T extends Record<string, any> = Record<string, a
   /* V5 read receipt data used by UI bindings. */
   public readReceiptInfo?: MessageReadReceiptInfo;
 
+  /** Message reaction summaries used by the UI. */
+  public reactions: ChatUIMessageReaction[] = [];
+
+  /** Current in-memory message edit state. */
+  public editStatus?: ChatUIMessageEditStatus;
+  /** In-memory edit draft. This is independent from the channel draft. */
+  public editDraft?: string;
+  /** SDK update timestamp recorded for a successful edit. */
+  public editTimestamp?: number;
+
   /**
    * Constructor for creating a message model, internal use only
    * @private Internal use only
@@ -31,6 +66,11 @@ export class ChatUIMessageModel<T extends Record<string, any> = Record<string, a
    */
   constructor(message: Message) {
     this.message = message;
+    const timestamp = message.updateInfo?.timestamp;
+    if (timestamp !== undefined && timestamp !== null) {
+      this.editStatus = ChatUIMessageEditStatus.SUCCESS;
+      this.editTimestamp = timestamp;
+    }
   }
 
   public get messageId(): string {
@@ -135,6 +175,7 @@ export class ChatUIMessageModel<T extends Record<string, any> = Record<string, a
     msg.senderUserId = this.senderUserId;
     msg.disableNotification = this.message.disableNotification;
     msg.hasChanged = this.message.hasChanged;
+    msg.hasReactions = this.message.hasReactions;
     msg.metadata = this.message.metadata;
     msg.updateInfo = this.message.updateInfo;
     msg.disableUpdateLastMessage = this.message.disableUpdateLastMessage;
@@ -144,6 +185,13 @@ export class ChatUIMessageModel<T extends Record<string, any> = Record<string, a
     clone.progress = this.progress;
     clone.file = this.file;
     clone.readReceiptInfo = this.readReceiptInfo;
+    clone.editStatus = this.editStatus;
+    clone.editDraft = this.editDraft;
+    clone.editTimestamp = this.editTimestamp;
+    clone.reactions = this.reactions.map((reaction) => ({
+      ...reaction,
+      users: [...reaction.users],
+    }));
     return clone;
   }
 

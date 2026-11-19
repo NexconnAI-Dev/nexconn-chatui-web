@@ -15,6 +15,8 @@ export const NCChatUICode = {
   CHANNEL_LIST_NOT_READY: 39005,
   /** Invalid message */
   INVALID_MESSAGE: 39006,
+  /** The message edit time limit has expired */
+  MODIFIED_MESSAGE_TIMEOUT: 33402, // Matches @nexconn/engine ErrorCode.MODIFIED_MESSAGE_TIMEOUT.
   /** Failed to get the channel */
   GET_CHANNEL_FAILED: 35021, // Matches @nexconn/engine ErrorCode.CONVER_GET_ERROR.
   /** Message content does not support speech-to-text */

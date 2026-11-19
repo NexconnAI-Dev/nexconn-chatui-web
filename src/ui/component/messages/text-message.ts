@@ -3,12 +3,12 @@ import { property } from 'lit/decorators.js';
 import { formatTxtMessageContent } from '../../../helper';
 import { ChatUIMessageModel } from '@lib/models/NCUIMessageModel';
 import { TextMessageContent } from '@nexconn/chat';
+import { I18nController } from '../../i18n/lit';
 
 export class TextMessageElement extends LitElement {
   static styles = css`
     p {
       margin: 0;
-      padding: 20px;
       word-break: break-word;
       font-size: 14px;
       line-height: 22px;
@@ -20,10 +20,20 @@ export class TextMessageElement extends LitElement {
     a:hover {
       color: #0047FF;
     }
+    .edited-marker {
+      margin-left: 4px;
+      color: #7C838E;
+      font-size: 12px;
+      white-space: nowrap;
+      -webkit-user-select: none;
+      user-select: none;
+    }
   `;
 
   @property({ type: Object })
   declare message: ChatUIMessageModel<TextMessageContent>;
+
+  private i18n = new I18nController(this);
 
   private handleLinkClick(type: string, address: string) {
     const trimmed = address.trim();
@@ -32,9 +42,12 @@ export class TextMessageElement extends LitElement {
 
   render() {
     const contentInfo = formatTxtMessageContent(this.message?.content?.text || '');
+    const editedMarker = this.message?.editTimestamp !== undefined
+      ? html`<span class="edited-marker">(${this.i18n.t('message.edit.edited')})</span>`
+      : '';
 
     if (contentInfo.type === 0) {
-      return html`<p>${this.message?.content?.text || ''}</p>`;
+      return html`<p>${this.message?.content?.text || ''}${editedMarker}</p>`;
     }
 
     return html`<p>${contentInfo.content.map((item, index) => {
@@ -52,6 +65,6 @@ export class TextMessageElement extends LitElement {
           >${addr}</a>`;
       }
       return html`<span>${item.content}</span>`;
-    })}</p>`;
+    })}${editedMarker}</p>`;
   }
 }

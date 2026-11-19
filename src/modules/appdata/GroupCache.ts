@@ -101,8 +101,8 @@ export class GroupCache extends BasicCache<ICacheGroupProfile, GroupProfile> {
     let changed = false;
 
     if (cacheProfile) {
-      if (!this._isSameGroupProfile(cacheProfile, profile)) {
-        // Update cached data.
+      if (cacheProfile.usingDefault || !this._isSameGroupProfile(cacheProfile, profile)) {
+        // A confirmed profile replaces the default state even when its fields match.
         this._updateCacheGroupProfile(cacheProfile, profile);
         changed = true;
       }
@@ -197,7 +197,7 @@ export class GroupCache extends BasicCache<ICacheGroupProfile, GroupProfile> {
     const { groupId, name, avatarUrl: portraitUri, memberCount } = profile;
 
     let cacheProfile = this._cache.get(groupId);
-    if (cacheProfile && this._isSameGroupProfile(cacheProfile, profile)) {
+    if (cacheProfile && !cacheProfile.usingDefault && this._isSameGroupProfile(cacheProfile, profile)) {
       this.logger.warn(LogTag.A_UPDATE_GROUP_PROFILE_R, `group profile not changed: ${groupId}`, traceId);
       return;
     }

@@ -10,10 +10,22 @@ import { ChatUIEvent } from '@lib/core/ChatUIEvent';
 import { Components } from '../component';
 import { InnerProviderTag } from '.';
 import { ChatUICommand } from "../../enums/ChatUICommand";
-import { ConnectionStatusChangeEvent, ChannelListItemChangeEvent, ChannelSelectedEvent, ForwardingEvent, InnerEvent, ChatUIEvents, ModalForwardingType } from '@lib/core/EventDefined';
+import { ConnectionStatusChangeEvent, ChannelSelectedEvent, ForwardingEvent, InnerEvent, ChatUIEvents, ModalForwardingType, ReactionDetailEvent } from '@lib/core/EventDefined';
+import { NCChatUICode } from '../../enums/NCChatUICode';
+import { openExternalUrl } from '../../helper/openExternalUrl';
+import {
+  MessageBubbleContentLayout,
+  resolveCustomMessageBubbleContentLayout,
+} from '../message-bubble-layout';
 
 let _logger: ILogger;
 let _ctx: ChatUIContext;
+let reactionDetailModal: HTMLElement | null = null;
+
+const closeReactionDetailModal = () => {
+  reactionDetailModal?.remove();
+  reactionDetailModal = null;
+};
 
 const currentUserId = new Signal<string>('')
 /**
@@ -55,12 +67,48 @@ export const unreadCountBottom = new Signal<number>(0);
  * Members of the selected group channel.
  * @description Excludes the current user.
  */
-export const selectedGroupMembers = new Signal<{
+export interface SelectedGroupMember {
   name: string
   nickname?: string
   userId: string
   avatarUrl: string
-}[]>([]);
+}
+
+export const selectedGroupMembers = new Signal<SelectedGroupMember[]>([]);
+
+const selectedGroupMembersById = new Map<string, SelectedGroupMember>();
+let selectedGroupMembersGeneration = 0;
+
+export const getSelectedGroupMember = (userId: string): SelectedGroupMember | undefined => (
+  selectedGroupMembersById.get(userId)
+);
+
+/** Notifies high-frequency name resolvers without serializing the full member list. */
+export const selectedGroupMembersVersion = new Signal(0);
+
+const setSelectedGroupMembers = (members: SelectedGroupMember[]): void => {
+  selectedGroupMembersById.clear();
+  members.forEach(member => selectedGroupMembersById.set(member.userId, member));
+  selectedGroupMembers.value = members;
+  selectedGroupMembersVersion.value += 1;
+};
+
+const updateSelectedGroupMembers = (
+  users: Array<{ name: string; userId: string; avatarUrl: string }>,
+  members: Array<{ userId: string; nickname?: string }>,
+): void => {
+  const membersById = new Map(members.map(member => [member.userId, member]));
+  const nextMembers = users
+    .filter(user => user.userId !== _ctx.userId)
+    .map<SelectedGroupMember>(user => ({
+      userId: user.userId,
+      nickname: membersById.get(user.userId)?.nickname,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+    }));
+
+  setSelectedGroupMembers(nextMembers);
+};
 
 /**
  * Current user profile.
@@ -71,21 +119,29 @@ export const currentUserProfile = new Signal<{
   userId: string
   avatarUrl: string
 } | undefined>(undefined);
+let currentUserProfileGeneration = 0;
 
 const _onConnectionStatusChange = async (e: ConnectionStatusChangeEvent) => {
   const { status } = e.data;
   if (status === ConnectionStatus.CONNECTED) {
+    const context = _ctx;
+    const generation = ++currentUserProfileGeneration;
     const userId = NCEngine.getCurrentUserId();
-    const users = await _ctx.appData.requestUserProfiles([userId]);
-    currentUserProfile.value = users[0];
+    const users = await context.appData.requestUserProfiles([userId]);
+    if (context !== _ctx || generation !== currentUserProfileGeneration || userId !== context.userId) return;
+    currentUserProfile.value = users[0] ? { ...users[0] } : undefined;
   };
 }
 
 const _onChannelSelected = async (evt: ChannelSelectedEvent) => {
+  const context = _ctx;
+  const generation = ++selectedGroupMembersGeneration;
+  closeReactionDetailModal();
   const channelModel = evt.data?.model;
   // Update cached state.
   openedChannel.value = channelModel || null;
-  selectedGroupMembers.value = [];
+  unreadCountBottom.value = channelModel?.unreadCount || 0;
+  updateSelectedGroupMembers([], []);
 
   // Stop audio playback when switching channels.
   ctx().audioPlayer.pause();
@@ -99,34 +155,42 @@ const _onChannelSelected = async (evt: ChannelSelectedEvent) => {
   if (channelType !== ChannelType.GROUP) {
     return;
   }
+  const isCurrent = () => context === _ctx
+    && generation === selectedGroupMembersGeneration
+    && !!openedChannel.value?.channelIdentifier.isEqualTo(channelModel.channelIdentifier);
 
   // Fetch group members.
-  const mems = await _ctx.appData.reqGroupMembers(channelId);
-  if (mems.length === 0) {
+  const mems = await context.appData.reqGroupMembers(channelId);
+  if (!isCurrent() || mems.length === 0) {
     return;
   }
 
-  const users = await _ctx.appData.requestUserProfiles(mems.map(item => item.userId));
-  if (!openedChannel.value || !channelModel.channelIdentifier.isEqualTo(openedChannel.value.channelIdentifier)) {
+  const users = await context.appData.requestUserProfiles(mems.map(item => item.userId));
+  if (!isCurrent()) {
     // Recheck the open channel after the asynchronous request completes.
     return;
   }
 
-  selectedGroupMembers.value = users.filter(item => item.userId !== _ctx.userId).map((item) => {
-    const index = mems.findIndex((mem) => mem.userId === item.userId)
-    return {
-      userId: item.userId,
-      nickname: mems[index].nickname,
-      name: item.name,
-      avatarUrl: item.avatarUrl,
-    }
-  });
+  updateSelectedGroupMembers(users, mems);
 };
 
 /**
  * Resets UIModule state.
  */
 export const destroyUserCache = async () => {
+  currentUserProfileGeneration += 1;
+  selectedGroupMembersGeneration += 1;
+  currentUserProfile.value = undefined;
+  closeReactionDetailModal();
+  channelListSourceGeneration += 1;
+  channelListGeneration += 1;
+  loadingMoreChannels = false;
+  channelList.value = [];
+  channelListHasMore.value = false;
+  sttStatusMap.value = {};
+  sttTextMap.value = {};
+  sttHiddenMap.value = {};
+  sttErrorCodeMap.value = {};
   // Reset the open channel.
   openedChannel.value = null;
   // Reset the input content.
@@ -136,7 +200,7 @@ export const destroyUserCache = async () => {
   // Reset the unread count.
   unreadCountBottom.value = 0;
   // Reset the group member list.
-  selectedGroupMembers.value = [];
+  updateSelectedGroupMembers([], []);
   // Update the environment userId.
   currentUserId.value = ctx().userId;
 }
@@ -144,6 +208,66 @@ export const destroyUserCache = async () => {
 export function initProviderContext(ctx: ChatUIContext): void {
   _ctx = ctx;
   _logger = ctx.logger;
+  currentUserProfileGeneration += 1;
+  selectedGroupMembersGeneration += 1;
+  currentUserProfile.value = undefined;
+  updateSelectedGroupMembers([], []);
+  channelListGeneration += 1;
+  loadingMoreChannels = false;
+  channelList.value = ctx.channelModule.getCachedChannelList();
+  channelListHasMore.value = channelList.value.length >= 30;
+  sttStatusMap.value = {};
+  sttTextMap.value = {};
+  sttHiddenMap.value = {};
+  sttErrorCodeMap.value = {};
+
+  // H5 unmounts the channel list while chatting; shared data must keep updating.
+  ctx.addEventListener(InnerEvent.CHANNELS_LIST_RESET, (e) => {
+    if (e.data.generation !== channelListSourceGeneration) return;
+    const { list } = e.data;
+    channelListGeneration += 1;
+    loadingMoreChannels = false;
+    channelList.value = [...list];
+    channelListHasMore.value = list.length >= 30;
+    list.forEach(syncOpenedChannel);
+    ctx.channelModule.updateLatesMessageStatus(list);
+  });
+  ctx.addEventListener(InnerEvent.CHANNELS_ITEM_ORDER_CHANGE, (e) => {
+    const list = [...channelList.value];
+    e.data.forEach(({ model, order }) => {
+      const index = list.findIndex(item => item.channelIdentifier.isEqualTo(model.channelIdentifier));
+      if (index !== -1) list.splice(index, 1);
+      list.splice(order, 0, model.clone());
+      syncOpenedChannel(model);
+    });
+    channelList.value = list;
+  });
+  ctx.addEventListener(InnerEvent.CHANNELS_ITEM_CHANGE, (e) => {
+    const list = [...channelList.value];
+    e.data.forEach(model => {
+      const index = list.findIndex(item => item.channelIdentifier.isEqualTo(model.channelIdentifier));
+      if (index !== -1) list.splice(index, 1, model.clone());
+      syncOpenedChannel(model);
+    });
+    channelList.value = list;
+  });
+  ctx.addEventListener(InnerEvent.CHANNELS_ITEM_DELETED, (e) => {
+    channelList.value = channelList.value.filter(item =>
+      !e.data.some(model => item.channelIdentifier.isEqualTo(model.channelIdentifier))
+    );
+  });
+  ctx.addEventListener(InnerEvent.SPEECH_TO_TEXT_STATE_CHANGE, (e) => {
+    const { messageUId, status, text, errorCode } = e.data;
+    if (sttHiddenMap.value[messageUId]) return;
+    sttStatusMap.value = { ...sttStatusMap.value, [messageUId]: status };
+    const errors = { ...sttErrorCodeMap.value };
+    if (errorCode !== undefined) errors[messageUId] = errorCode;
+    else delete errors[messageUId];
+    sttErrorCodeMap.value = errors;
+    if (status === 'success') {
+      sttTextMap.value = { ...sttTextMap.value, [messageUId]: text || '' };
+    }
+  });
 
   _ctx.addEventListener(ChatUIEvents.CHANNEL_SELECTED, _onChannelSelected);
   // Fetch the connected user's profile.
@@ -172,6 +296,45 @@ export const logger = () => _logger;
  * Channel list data.
  */
 export const channelList = new Signal<ChatUIChannelModel[]>([]);
+export const channelListHasMore = new Signal(false);
+let channelListSourceGeneration = 0;
+let channelListGeneration = 0;
+let loadingMoreChannels = false;
+
+const syncOpenedChannel = (model: ChatUIChannelModel): void => {
+  if (openedChannel.value?.channelIdentifier.isEqualTo(model.channelIdentifier)) {
+    openedChannel.value = model.clone();
+    unreadCountBottom.value = model.unreadCount;
+  }
+};
+
+export const loadMoreChannels = async (): Promise<void> => {
+  if (!channelListHasMore.value || loadingMoreChannels) return;
+  const context = ctx();
+  const generation = channelListGeneration;
+  const lastChannel = channelList.value[channelList.value.length - 1] || null;
+  loadingMoreChannels = true;
+  try {
+    const { hasMore, code, list } = await context.channelModule.getMoreChannelList(lastChannel);
+    if (context !== _ctx || generation !== channelListGeneration) return;
+    if (code === NCChatUICode.SUCCESS) {
+      const additions = list.filter(item => !channelList.value.some(current =>
+        current.channelIdentifier.isEqualTo(item.channelIdentifier)
+      ));
+      channelList.value = [...channelList.value, ...additions];
+      channelListHasMore.value = hasMore;
+      context.channelModule.updateLatesMessageStatus(list);
+    }
+  } finally {
+    if (context === _ctx && generation === channelListGeneration) loadingMoreChannels = false;
+  }
+};
+
+// Conversion display state belongs to the signed-in user, not a mounted message list.
+export const sttStatusMap = new Signal<Record<string, 'converting' | 'success' | 'error'>>({});
+export const sttTextMap = new Signal<Record<string, string>>({});
+export const sttHiddenMap = new Signal<Record<string, boolean>>({});
+export const sttErrorCodeMap = new Signal<Record<string, number>>({});
 
 /**
  * Message list data.
@@ -252,7 +415,8 @@ const appendChild = (ctx: ChatUIContext, ele: HTMLElement) => {
  */
 export const initModalListener = (ctx: ChatUIContext): void => {
   ctx.addEventListener(ChatUIEvents.CONFIRM_EVENT, (e) => {
-    const element: HTMLElement = document.createElement(InnerProviderTag.MODAL_CONFIRM_PROVIDER);
+    const element = document.createElement(InnerProviderTag.MODAL_CONFIRM_PROVIDER) as HTMLElement & { content: string };
+    element.content = e.data;
     element.addEventListener('cancel', () => {
       e.sendResult(false);
       element.remove();
@@ -266,7 +430,8 @@ export const initModalListener = (ctx: ChatUIContext): void => {
   });
 
   ctx.addEventListener(ChatUIEvents.ALERT_EVENT, (e) => {
-    const element: HTMLElement = document.createElement(InnerProviderTag.MODAL_ALERT_PROVIDER);
+    const element = document.createElement(InnerProviderTag.MODAL_ALERT_PROVIDER) as HTMLElement & { content: string };
+    element.content = e.data;
     element.addEventListener('cancel', (event) => {
       element.remove();
     });
@@ -312,6 +477,23 @@ export const initModalListener = (ctx: ChatUIContext): void => {
     appendChild(ctx, element);
   });
 
+  ctx.addEventListener(ChatUIEvents.REACTIONS_DETAIL_EVENT, (e: ReactionDetailEvent) => {
+    closeReactionDetailModal();
+    const element = document.createElement(InnerProviderTag.MODAL_REACTIONS_DETAIL_PROVIDER) as HTMLElement & {
+      message: ChatUIMessageModel;
+      initialReactionId: string;
+    };
+    reactionDetailModal = element;
+    element.addEventListener('cancel', () => {
+      if (reactionDetailModal === element) {
+        closeReactionDetailModal();
+      }
+    });
+    element.message = e.data.message;
+    element.initialReactionId = e.data.reactionId;
+    appendChild(ctx, element);
+  });
+
   ctx.addEventListener(ChatUIEvents.TAKE_PHOTO_MODAL_EVENT, (e) => {
     const element: HTMLElement = document.createElement(InnerProviderTag.MODAL_TAKE_PHOTO_PROVIDER);
     // Cancel.
@@ -325,9 +507,11 @@ export const initModalListener = (ctx: ChatUIContext): void => {
   ctx.addEventListener(ChatUIEvents.MESSAGE_LINK_CLICK, (e) => {
     if (e.data.type === 'mail') {
       location.href = `mailto:${e.data.address}`;
-      return
+      return;
     }
-    window.open(e.data.address);
+    if (e.data.type === 'url') {
+      openExternalUrl(e.data.address);
+    }
   });
 
   ctx.addEventListener(InnerEvent.GROUP_MEMBERS_UPDATE, async (e) => {
@@ -343,43 +527,71 @@ export const initModalListener = (ctx: ChatUIContext): void => {
     }
 
     // Update the group member list.
-    const users = await _ctx.appData.requestUserProfiles(members.map(item => item.userId));
-    if (!openedChannel.value || openedChannel.value.channelType !== ChannelType.GROUP || openedChannel.value.channelId !== groupId) {
+    const generation = ++selectedGroupMembersGeneration;
+    const users = await ctx.appData.requestUserProfiles(members.map(item => item.userId));
+    if (ctx !== _ctx || generation !== selectedGroupMembersGeneration
+      || !openedChannel.value || openedChannel.value.channelType !== ChannelType.GROUP || openedChannel.value.channelId !== groupId) {
       // Recheck the open channel after the asynchronous request completes.
       return;
     }
 
-    selectedGroupMembers.value.splice(0, selectedGroupMembers.value.length, ...users.filter(item => item.userId !== _ctx.userId).map((item, index) => ({
-      userId: item.userId,
-      nickname: members[index].nickname,
-      name: item.name,
-      avatarUrl: item.avatarUrl,
-    })));
+    updateSelectedGroupMembers(users, members);
   });
 
-  /** Synchronize the open channel when its cache entry changes so asynchronous profile updates refresh the UI. */
-  ctx.addEventListener(InnerEvent.CHANNELS_ITEM_CHANGE, (e: ChannelListItemChangeEvent) => {
-    if (!openedChannel.value) {
-      return;
+  ctx.addEventListener(InnerEvent.USER_PROFILES_UPDATE, (e) => {
+    const profilesById = new Map(e.data.map(profile => [profile.userId, profile]));
+    const self = profilesById.get(ctx.userId);
+    if (self) {
+      currentUserProfileGeneration += 1;
+      currentUserProfile.value = { ...self };
     }
 
-    const changed = e.data.find((item) => item.channelIdentifier.isEqualTo(openedChannel.value!.channelIdentifier));
-    if (!changed) {
-      return;
+    let changed = false;
+    const members = selectedGroupMembers.value.map(member => {
+      const profile = profilesById.get(member.userId);
+      if (!profile || (member.name === profile.name && member.avatarUrl === profile.avatarUrl)) return member;
+      changed = true;
+      return { ...member, name: profile.name, avatarUrl: profile.avatarUrl };
+    });
+    if (changed) {
+      setSelectedGroupMembers(members);
     }
-    openedChannel.value = changed.clone();
   });
+
 }
 
-const messageComponentTags: Record<string, string> = {
-  [MessageType.TEXT]: Components.TEXT_MESSAGE,
-  [MessageType.IMAGE]: Components.IMAGE_MESSAGE,
-  [MessageType.SHORT_VIDEO]: Components.SHORT_VIDEO_MESSAGE,
-  [MessageType.FILE]: Components.FILE_MESSAGE,
-  [MessageType.REFERENCE]: Components.REFERENCE_MESSAGE,
-  [MessageType.COMBINE]: Components.COMBINE_MESSAGE,
-  [MessageType.HD_VOICE]: InnerProviderTag.HD_VOICE_MESSAGE_PROVIDER,
-  [MessageType.GIF]: Components.GIF_MESSAGE,
+interface MessageComponentDefinition {
+  tag: string;
+  bubbleContentLayout: MessageBubbleContentLayout;
+}
+
+const createMessageComponentDefinition = (
+  tag: string,
+  bubbleContentLayout: MessageBubbleContentLayout = MessageBubbleContentLayout.STANDARD,
+): MessageComponentDefinition => ({ tag, bubbleContentLayout });
+
+const messageComponentDefinitions: Record<string, MessageComponentDefinition> = {
+  [MessageType.TEXT]: createMessageComponentDefinition(Components.TEXT_MESSAGE),
+  [MessageType.IMAGE]: createMessageComponentDefinition(
+    Components.IMAGE_MESSAGE,
+    MessageBubbleContentLayout.ADAPTIVE,
+  ),
+  [MessageType.SHORT_VIDEO]: createMessageComponentDefinition(
+    Components.SHORT_VIDEO_MESSAGE,
+    MessageBubbleContentLayout.ADAPTIVE,
+  ),
+  [MessageType.FILE]: createMessageComponentDefinition(Components.FILE_MESSAGE),
+  // The current reference renderer owns its compound quote/content spacing.
+  [MessageType.REFERENCE]: createMessageComponentDefinition(
+    Components.REFERENCE_MESSAGE,
+    MessageBubbleContentLayout.EDGE_TO_EDGE,
+  ),
+  [MessageType.COMBINE]: createMessageComponentDefinition(Components.COMBINE_MESSAGE),
+  [MessageType.HD_VOICE]: createMessageComponentDefinition(InnerProviderTag.HD_VOICE_MESSAGE_PROVIDER),
+  [MessageType.GIF]: createMessageComponentDefinition(
+    Components.GIF_MESSAGE,
+    MessageBubbleContentLayout.ADAPTIVE,
+  ),
 };
 
 const customMessageDigestHandlers: Map<string, (message: ChatUIMessageModel, language: string) => string> = new Map();
@@ -420,13 +632,25 @@ setCustomMessageDigestHandler('RC:RcNtf', (message) => {
  * @param messageType
  * @param tag
  */
-export const regMessageTypeComponentTag = (messageType: string, tag: string) => {
-  messageComponentTags[messageType] = tag;
+export const regMessageTypeComponentTag = (
+  messageType: string,
+  tag: string,
+  disableDefaultBubblePadding = false,
+) => {
+  messageComponentDefinitions[messageType] = createMessageComponentDefinition(
+    tag,
+    resolveCustomMessageBubbleContentLayout(disableDefaultBubblePadding),
+  );
 };
 
 export const getMessageComponentTag = (messageType: string): string => {
-  return messageComponentTags[messageType] || Components.UNSUPPORTED_MESSAGE;
+  return messageComponentDefinitions[messageType]?.tag || Components.UNSUPPORTED_MESSAGE;
 };
+
+export const getMessageBubbleContentLayout = (
+  messageType: string,
+): MessageBubbleContentLayout => messageComponentDefinitions[messageType]?.bubbleContentLayout
+  || MessageBubbleContentLayout.STANDARD;
 
 /**
  * Checks whether a message type is rendered as a grey message.
@@ -434,7 +658,7 @@ export const getMessageComponentTag = (messageType: string): string => {
  * @returns
  */
 export const isGreyMessage = (messageType: string): boolean => {
-  return !messageComponentTags[messageType];
+  return !messageComponentDefinitions[messageType];
 };
 
 /**
@@ -463,12 +687,6 @@ export const forwarding = async (forwardType: ModalForwardingType, messages: Cha
     // Forward as a combined message.
     list.forEach((item) => _ctx.message.sendCombineMessage(item.channelIdentifier, messages.slice()));
   }
-
-  // Show the forwarding success toast.
-  _ctx.emit(new ChatUIEvent(ChatUIEvents.TOAST_EVENT, {
-    message: _ctx.i18n.format('toast.forward.success'),
-    showIcon: true,
-  }));
 
   // Forwarding completed.
   return true;

@@ -10,6 +10,7 @@ import {
 import { IMAGE_FAILED } from '../../../assets/index';
 import { ChatUIEvents, MessagesDeletedEvent } from '../../../core/EventDefined';
 import { ChatUIMessageModel } from '@lib/models/NCUIMessageModel';
+import { isMobileDevice } from '@lib/helper';
 
 export class ModalMediaMessageProvider extends LitElement {
   static styles = css`
@@ -113,6 +114,15 @@ export class ModalMediaMessageProvider extends LitElement {
       display: block;
     }
     video, img { max-width: 100%; max-height: 100%; }
+    @media screen and (max-width: 768px) {
+      .media-message-video {
+        width: 100%;
+      }
+      .media-message-video video {
+        width: 100%;
+        object-fit: contain;
+      }
+    }
   `;
 
   @property({ type: Object }) declare message: ChatUIMessageModel;
@@ -132,8 +142,8 @@ export class ModalMediaMessageProvider extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    this.widthSize = 50;
-    this.heightSize = 80;
+    this.widthSize = isMobileDevice() ? 100 : 50;
+    this.heightSize = isMobileDevice() ? 100 : 80;
     this.upHover = false;
     this.downHover = false;
     this.downloadHover = false;
@@ -171,7 +181,8 @@ export class ModalMediaMessageProvider extends LitElement {
       if (this.imgRef && this.boxRef) {
         this.selfStart = this.imgRef.clientHeight > this.boxRef.clientHeight;
       }
-      if ((this.widthSize + num) > 70 || (this.widthSize + num) < 10) return;
+      const maxWidthSize = isMobileDevice() ? 100 : 70;
+      if ((this.widthSize + num) > maxWidthSize || (this.widthSize + num) < 10) return;
       this.widthSize = this.widthSize + num;
     }
   };
@@ -267,7 +278,7 @@ export class ModalMediaMessageProvider extends LitElement {
             ` : nothing}
             ${isVideo ? html`
               <div class="media-message-box" style="max-height: calc(100% - 54px)">
-                <div class="media-message" style="height: ${this.heightSize}%">
+                <div class="media-message media-message-video" style="height: ${this.heightSize}%">
                   <video
                     .poster=${'data:image/png;base64,' + this.thumbnailBase64}
                     style="height: 100%;"

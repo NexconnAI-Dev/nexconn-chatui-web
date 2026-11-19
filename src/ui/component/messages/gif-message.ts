@@ -9,9 +9,15 @@ import { GIFMessageContent } from '@nexconn/chat';
 
 export class GifMessageElement extends LitElement {
   static styles = css`
+    :host {
+      display: block;
+      max-width: 100%;
+    }
     .gif-message-box {
       width: 247px;
-      height: 247px;
+      max-width: 100%;
+      aspect-ratio: 1;
+      box-sizing: border-box;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -20,6 +26,8 @@ export class GifMessageElement extends LitElement {
     }
     img {
       max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
     }
   `;
 
@@ -30,6 +38,8 @@ export class GifMessageElement extends LitElement {
   private imgEl!: HTMLImageElement;
 
   @state() private declare url: string;
+
+  private objectUrl?: string;
 
   private adjustScroll() {
     // GIF decoding and final layout may finish after message insertion, so recalibrate scrolling when the media state changes.
@@ -43,13 +53,15 @@ export class GifMessageElement extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    this.url = this.message.file ? window.URL.createObjectURL(this.message.file) : this.message.content.remoteUrl;
+    this.objectUrl = this.message.file ? window.URL.createObjectURL(this.message.file) : undefined;
+    this.url = this.objectUrl ?? this.message.content.remoteUrl;
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this.message.file) {
-      window.URL.revokeObjectURL(this.url);
+    if (this.objectUrl) {
+      window.URL.revokeObjectURL(this.objectUrl);
+      this.objectUrl = undefined;
     }
   }
 

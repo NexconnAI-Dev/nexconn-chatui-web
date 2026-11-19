@@ -14,7 +14,14 @@ import {
   MessageDirection,
   MessageDeletedInfo,
   TextMessageContent,
+  ReferenceMessageContent,
+  ReferenceMessageStatus,
+  MessagesUpdatedEvent,
   FileMessageContent,
+  MessageReaction,
+  MessageReactionChangedEvent,
+  MessageReactionEventData,
+  MessageReactionOperationType,
 } from '@nexconn/chat';
 import { ChatUIModule } from './ChatUIModule';
 import { MessageSendQueue, FileUploadQueue } from './Queue';
@@ -27,7 +34,7 @@ import { NCChatUICode } from '../enums/NCChatUICode';
 import { LogTag } from '@lib/enums/LogTag';
 import { getMessageDesc } from '@lib/ui/provider/context';
 import { DeleteMessageData, InnerEvent, ChatUIEvents } from '@lib/core/EventDefined';
-import { ChatUIMessageModel } from '@lib/models/NCUIMessageModel';
+import { ChatUIMessageEditStatus, ChatUIMessageModel, ChatUIMessageReaction } from '@lib/models/NCUIMessageModel';
 
 /**
  * In-memory message cache.
@@ -55,7 +62,46 @@ interface IChatUIMessagesCacheData {
   hasMoreAfterEndTime: boolean;
 }
 
+interface ReactionSummaryRequest {
+  message: ChatUIMessageModel;
+  /** Reaction changes replace the array, so its identity acts as a version. */
+  reactions: ChatUIMessageReaction[];
+  needsRefetch: boolean;
+}
+
 const MESSAGE_PAGE_SIZE = 30;
+const REACTION_SUMMARY_BATCH_SIZE = 100;
+const REACTION_USER_CACHE_SIZE = 10;
+const REFERENCE_REFRESH_BATCH_SIZE = 20;
+
+const normalizeReactionUserIds = (
+  userIds: string[],
+  currentUserId: string,
+  hasCurrentUserReacted: boolean,
+): string[] => {
+  const uniqueIds = Array.from(new Set(userIds.filter(Boolean)));
+  if (hasCurrentUserReacted && currentUserId) {
+    return [currentUserId, ...uniqueIds.filter((userId) => userId !== currentUserId)]
+      .slice(0, REACTION_USER_CACHE_SIZE);
+  }
+  return uniqueIds.slice(0, REACTION_USER_CACHE_SIZE);
+};
+
+/** Normalize SDK summaries at the message-cache boundary. */
+export const normalizeMessageReaction = (
+  reaction: MessageReaction,
+  currentUserId: string,
+): ChatUIMessageReaction => {
+  const { users, ...summary } = reaction;
+  return {
+    ...summary,
+    users: normalizeReactionUserIds(
+      users.map(({ userId }) => userId),
+      currentUserId,
+      reaction.hasCurrentUserReacted,
+    ),
+  };
+};
 
 const parseFiles = (file: File): Promise<NCResult<SendMessageParams>> => {
   switch (file.type) {
@@ -98,11 +144,29 @@ export class MessageModule extends ChatUIModule {
   private readonly _uploadQueue: FileUploadQueue;
 
   private _transactionIdCount = 0;
+  /** Local insertions are display data, not evidence of history coverage. */
+  private _insertedMessageIds = new Set<number>();
+  private _editGeneration = 0;
 
   /**
    * Stages message list data to reconcile locally sending messages with persisted messages.
    */
   private _histories: Map<string, IChatUIMessagesCacheData> = new Map();
+
+  /** Invalidates asynchronous message work started for a previous signed-in user. */
+  private _historyGeneration = 0;
+
+  /** Request ownership prevents stale responses and cleanup from affecting newer requests. */
+  private _reactionSummaryInFlight = new Map<string, ReactionSummaryRequest>();
+
+  /** Reference-message refreshes currently being requested. */
+  private _referenceRefreshInFlight = new Set<string>();
+
+  /** Generation tokens prevent an older refresh response from replacing newer state. */
+  private _referenceRefreshGenerations = new Map<string, number>();
+
+  /** A trigger received while a reference refresh is in flight gets one follow-up attempt. */
+  private _referenceRefreshPending = new Set<string>();
 
   /**
    * Tracks messageUIds with sent V5 receipts to prevent duplicates.
@@ -126,10 +190,18 @@ export class MessageModule extends ChatUIModule {
     const onMessageDeleted = (event: MessageDeletedEvent) => {
       this._handleMessagesDeleted(event.messages)
     }
+    const onMessagesUpdated = (event: MessagesUpdatedEvent) => {
+      this._handleMessagesUpdated(event.messages);
+    }
+    const onMessageReactionChanged = (event: MessageReactionChangedEvent) => {
+      this._onMessageReactionChanged(event);
+    }
     NCEngine.addMessageHandler('msg-data-module', new MessageHandler({
       onMessageReceiptResponse,
       onMessageReceived,
       onMessageDeleted,
+      onMessagesUpdated,
+      onMessageReactionChanged,
     }));
   }
 
@@ -138,7 +210,20 @@ export class MessageModule extends ChatUIModule {
   }
 
   protected _onDestroyUserCache(): void {
+    this._historyGeneration += 1;
+    this._editGeneration += 1;
+    this._histories.forEach(({ histories }) => histories.forEach((message) => {
+      if (message.editStatus !== ChatUIMessageEditStatus.SUCCESS) {
+        message.editStatus = undefined;
+        message.editDraft = undefined;
+      }
+    }));
     this._histories.clear();
+    this._insertedMessageIds.clear();
+    this._reactionSummaryInFlight.clear();
+    this._referenceRefreshInFlight.clear();
+    this._referenceRefreshGenerations.clear();
+    this._referenceRefreshPending.clear();
     this._transactionIdCount = 0;
   }
 
@@ -189,6 +274,46 @@ export class MessageModule extends ChatUIModule {
     return cached;
   }
 
+  private _isSameMessage(source: ChatUIMessageModel, target: ChatUIMessageModel): boolean {
+    if (source.messageId && target.messageId) return source.messageId === target.messageId;
+    if (source.clientId && target.clientId) return source.clientId === target.clientId;
+    return false;
+  }
+
+  private _isInsertedMessage(message: ChatUIMessageModel): boolean {
+    return message.transactionId !== undefined && this._insertedMessageIds.has(message.transactionId);
+  }
+
+  /** Use history rows as cursors so an arbitrary local timestamp cannot skip a history range. */
+  getHistoryPageTimestamp(identifier: ChannelIdentifier, messages: ChatUIMessageModel[], forward: boolean): number {
+    const message = forward
+      ? messages.find((item) => !this._isInsertedMessage(item))
+      : messages[findLastIndex(messages, (item) => !this._isInsertedMessage(item))];
+    if (message) return message.sentTime;
+    const cached = this._getExistCache(identifier);
+    return cached ? (forward ? cached.endTime : cached.startTime) : 0;
+  }
+
+  private _mergeInsertedMessages(
+    identifier: ChannelIdentifier,
+    list: ChatUIMessageModel[],
+    timestamp: number,
+    forward: boolean,
+    hasMore: boolean,
+  ): ChatUIMessageModel[] {
+    // Include out-of-window insertions only once history reaches that end of the channel.
+    const startTime = forward ? (hasMore ? (list[0]?.sentTime ?? timestamp) : -Infinity) : timestamp;
+    const endTime = forward ? (timestamp === 0 ? Infinity : timestamp)
+      : (hasMore ? (list[list.length - 1]?.sentTime ?? timestamp) : Infinity);
+    const inserted = this._getExistCache(identifier)?.histories.filter((message) => (
+      this._isInsertedMessage(message)
+      && (forward ? message.sentTime >= startTime : message.sentTime > startTime)
+      && (forward ? message.sentTime < endTime : message.sentTime <= endTime)
+      && !list.some((item) => this._isSameMessage(item, message))
+    )) || [];
+    return [...list, ...inserted].sort((a, b) => a.sentTime - b.sentTime);
+  }
+
   /**
    * Append messages to the cache with automatic deduplication.
    * @param histories
@@ -198,15 +323,7 @@ export class MessageModule extends ChatUIModule {
     const { histories, startTime } = cache;
     messages.forEach((message) => {
       // History and live messages may interleave; replace matching messages to prevent duplicates.
-      const duplicateIndex = histories.findIndex((item) => {
-        if (message.messageId && item.messageId) {
-          return item.messageId === message.messageId;
-        }
-        if (message.clientId && item.clientId) {
-          return item.clientId === message.clientId;
-        }
-        return false;
-      });
+      const duplicateIndex = histories.findIndex((item) => this._isSameMessage(item, message));
       if (duplicateIndex !== -1) {
         histories.splice(duplicateIndex, 1, message);
       } else {
@@ -235,13 +352,11 @@ export class MessageModule extends ChatUIModule {
   private _unshift2Cache(cache: IChatUIMessagesCacheData, ...messages: ChatUIMessageModel[]): void {
     const { histories } = cache;
     messages.forEach((message) => {
-      // Find a message newer than the current message.
-      const index = histories.findIndex((item) => item.messageId === message.messageId || item.sentTime > message.sentTime);
-      if (index === -1) {
-        histories.push(message);
-      } else if (histories[index].messageId !== message.messageId) {
-        // Do not insert a duplicate message ID.
-        histories.splice(index, 0, message);
+      const duplicateIndex = histories.findIndex((item) => this._isSameMessage(item, message));
+      if (duplicateIndex === -1) {
+        const index = histories.findIndex((item) => item.sentTime > message.sentTime);
+        if (index === -1) histories.push(message);
+        else histories.splice(index, 0, message);
       }
       // Update the start time.
       const newTime = message.sentTime - 1;
@@ -302,6 +417,7 @@ export class MessageModule extends ChatUIModule {
     const sendReceiptMessagesList = Array.from(sendReceiptMessages);
     const channel = createNexconnChannel(identifier)!;
     const res = await channel.sendReadReceiptResponse(sendReceiptMessagesList);
+    if (!res.isOk) return;
     sendReceiptMessagesList.forEach((id) => this._v5Responded.add(id));
     this._markSendReceiptTrue(identifier, sendReceiptMessagesList);
   }
@@ -322,6 +438,239 @@ export class MessageModule extends ChatUIModule {
         }
       });
     } catch (e) { this.logger.warn(LogTag.L_SEND_V5_RECEIPT_E, `markSendReceiptTrue error: ${e}`); }
+  }
+
+  private _referenceRefreshKey(channelIdentifier: ChannelIdentifier, messageId: string): string {
+    return `${trans2ChannelKey(channelIdentifier)}:${messageId}`;
+  }
+
+  private _referenceRefreshGeneration(key: string): number {
+    const generation = (this._referenceRefreshGenerations.get(key) || 0) + 1;
+    this._referenceRefreshGenerations.set(key, generation);
+    return generation;
+  }
+
+  private _invalidateReferenceRefresh(channelIdentifier: ChannelIdentifier, messageId: string): void {
+    if (!messageId) {
+      return;
+    }
+    const key = this._referenceRefreshKey(channelIdentifier, messageId);
+    this._referenceRefreshGeneration(key);
+    this._referenceRefreshPending.delete(key);
+  }
+
+  private _getReferenceMessageId(message: ChatUIMessageModel): string | undefined {
+    if (message.messageType !== MessageType.REFERENCE) {
+      return undefined;
+    }
+    const reference = message.content as ReferenceMessageContent;
+    return reference.referMsgId || undefined;
+  }
+
+  private _setReferenceSnapshot(
+    message: ChatUIMessageModel,
+    reference: Pick<ReferenceMessageContent, 'referMsg' | 'referMsgStatus'>,
+  ): void {
+    const original = message.message;
+    // A locally created message can share its content with the send parameters.
+    // Replace the SDK snapshot so display-only state never mutates that payload.
+    const snapshot = Helper.createMessage(message.channelIdentifier, new SendMessageParams({
+      ...message.content,
+      ...reference,
+    }, MessageType.REFERENCE), message.senderUserId);
+    Object.assign(snapshot, {
+      messageId: original.messageId,
+      sentTime: original.sentTime,
+      senderUserId: original.senderUserId,
+      direction: original.direction,
+      clientId: original.clientId,
+      sentStatus: original.sentStatus,
+      directedUserIds: original.directedUserIds,
+      sentReceipt: original.sentReceipt,
+      needReceipt: original.needReceipt,
+      disableNotification: original.disableNotification,
+      disableUpdateLastMessage: original.disableUpdateLastMessage,
+      hasChanged: original.hasChanged,
+      hasReactions: original.hasReactions,
+      metadata: original.metadata,
+      updateInfo: original.updateInfo,
+    });
+    (message as any).message = snapshot;
+  }
+
+  private _syncReferenceFromLocal(message: ChatUIMessageModel, referenced?: Message): boolean {
+    const referenceId = this._getReferenceMessageId(message);
+    if (!message.messageId || !referenceId) return false;
+    const original = referenced || this._getExistCache(message.channelIdentifier)?.histories
+      .find((item) => item.messageId === referenceId)?.message;
+    if (!original || original.messageId !== referenceId
+      || !original.channelIdentifier.isEqualTo(message.channelIdentifier)
+      || original.updateInfo?.timestamp === undefined || original.updateInfo?.timestamp === null) {
+      return false;
+    }
+    const current = message.content as ReferenceMessageContent;
+    if (current.referMsgStatus === ReferenceMessageStatus.DELETE
+      || current.referMsgStatus === ReferenceMessageStatus.RECALLED) return false;
+    // The SDK message contains the last confirmed body, independently of editDraft.
+    const { referMsg } = Helper.wrapAsReferenceMessageContent(original, current.text);
+    if (current.referMsgStatus === ReferenceMessageStatus.MODIFIED
+      && JSON.stringify(current.referMsg) === JSON.stringify(referMsg)) return false;
+    this._setReferenceSnapshot(message, { referMsg, referMsgStatus: ReferenceMessageStatus.MODIFIED });
+    this._invalidateReferenceRefresh(message.channelIdentifier, message.messageId);
+    return true;
+  }
+
+  /**
+   * Schedule the latest quoted-content lookup for reference messages.
+   * This method intentionally does not await the SDK request so history rendering
+   * can proceed with the locally cached snapshot.
+   */
+  private _scheduleReferenceRefresh(messages: ChatUIMessageModel[]): void {
+    const groups = new Map<string, {
+      channelIdentifier: ChannelIdentifier;
+      messages: ChatUIMessageModel[];
+    }>();
+    const changed: ChatUIMessageModel[] = [];
+
+    messages.forEach((message) => {
+      if (!message.messageId || !this._getReferenceMessageId(message)) {
+        return;
+      }
+      if (this._syncReferenceFromLocal(message)) changed.push(message);
+      const key = trans2ChannelKey(message.channelIdentifier);
+      const group = groups.get(key) || {
+        channelIdentifier: message.channelIdentifier,
+        messages: [],
+      };
+      if (!group.messages.some((item) => item.messageId === message.messageId)) {
+        group.messages.push(message);
+      }
+      groups.set(key, group);
+    });
+
+    if (changed.length > 0) {
+      this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, changed));
+    }
+
+    groups.forEach(({ channelIdentifier, messages: referenceMessages }) => {
+      for (let offset = 0; offset < referenceMessages.length; offset += REFERENCE_REFRESH_BATCH_SIZE) {
+        const batch = referenceMessages.slice(offset, offset + REFERENCE_REFRESH_BATCH_SIZE);
+        void this._refreshReferenceMessageBatch(channelIdentifier, batch);
+      }
+    });
+  }
+
+  private _scheduleReferenceRefreshForIds(
+    channelIdentifier: ChannelIdentifier,
+    referencedMessageIds: Iterable<string>,
+  ): void {
+    const ids = new Set(Array.from(referencedMessageIds).filter(Boolean));
+    if (ids.size === 0) {
+      return;
+    }
+    const cached = this._getExistCache(channelIdentifier);
+    if (!cached) {
+      return;
+    }
+    this._scheduleReferenceRefresh(cached.histories.filter((message) => {
+      const referencedMessageId = this._getReferenceMessageId(message);
+      return !!referencedMessageId && ids.has(referencedMessageId);
+    }));
+  }
+
+  private async _refreshReferenceMessageBatch(
+    channelIdentifier: ChannelIdentifier,
+    messages: ChatUIMessageModel[],
+  ): Promise<void> {
+    const historyGeneration = this._historyGeneration;
+    const candidates: Array<{
+      key: string;
+      generation: number;
+      message: ChatUIMessageModel;
+    }> = [];
+
+    messages.forEach((message) => {
+      if (!message.messageId || !this._getReferenceMessageId(message)) {
+        return;
+      }
+      const key = this._referenceRefreshKey(channelIdentifier, message.messageId);
+      if (this._referenceRefreshInFlight.has(key)) {
+        this._referenceRefreshGeneration(key);
+        this._referenceRefreshPending.add(key);
+        return;
+      }
+      this._referenceRefreshInFlight.add(key);
+      candidates.push({
+        key,
+        generation: this._referenceRefreshGeneration(key),
+        message,
+      });
+    });
+
+    if (candidates.length === 0) {
+      return;
+    }
+
+    try {
+      const result = await BaseChannel.refreshReferenceMessage(
+        candidates.map(({ message }) => message.message as Message<ReferenceMessageContent>),
+      );
+      if (historyGeneration !== this._historyGeneration || !result.isOk || !Array.isArray(result.data)) {
+        return;
+      }
+
+      const changed: ChatUIMessageModel[] = [];
+      result.data.forEach(({ messageId, message: refreshed, code }) => {
+        const candidate = candidates.find((item) => item.message.messageId === messageId);
+        if (!candidate || this._referenceRefreshGenerations.get(candidate.key) !== candidate.generation || !refreshed) {
+          return;
+        }
+        const cached = this._getExistCache(channelIdentifier);
+        const current = cached?.histories.find((item) => item.messageId === messageId);
+        if (!current || current.messageType !== MessageType.REFERENCE) {
+          return;
+        }
+        const reference = refreshed.content;
+        if (refreshed.messageType !== MessageType.REFERENCE
+          || !refreshed.channelIdentifier.isEqualTo(channelIdentifier)
+          || reference.referMsgId !== this._getReferenceMessageId(current)) return;
+        const unavailable = reference.referMsgStatus === ReferenceMessageStatus.DELETE
+          || reference.referMsgStatus === ReferenceMessageStatus.RECALLED;
+        if (code !== 0 && !unavailable) return;
+        // An edited message cannot become unedited; a lagging query must not
+        // replace confirmed edited content with the original reference snapshot.
+        if ((current.content as ReferenceMessageContent).referMsgStatus === ReferenceMessageStatus.MODIFIED
+          && (reference.referMsgStatus === undefined
+            || reference.referMsgStatus === ReferenceMessageStatus.DEFAULT)) return;
+        this._setReferenceSnapshot(current, {
+          referMsg: reference.referMsg,
+          referMsgStatus: reference.referMsgStatus,
+        });
+        changed.push(current);
+      });
+
+      if (changed.length > 0) {
+        this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, changed));
+      }
+    } finally {
+      candidates.forEach(({ key, generation }) => {
+        if (historyGeneration !== this._historyGeneration) {
+          return;
+        }
+        const stale = this._referenceRefreshGenerations.get(key) !== generation;
+        const pending = this._referenceRefreshPending.delete(key);
+        this._referenceRefreshInFlight.delete(key);
+        if (!stale && !pending) {
+          return;
+        }
+        const candidateMessageId = candidates.find((item) => item.key === key)?.message.messageId;
+        const current = this._getExistCache(channelIdentifier)?.histories
+          .find((item) => item.messageId === candidateMessageId);
+        if (current) {
+          this._scheduleReferenceRefresh([current]);
+        }
+      });
+    }
   }
 
   private _handleMessages(messages: Message<any>[]): void {
@@ -345,9 +694,27 @@ export class MessageModule extends ChatUIModule {
     // Process newMsgs again.
     newMsgs = this._handleNotifiedUIMessaages(newMsgs);
 
+    const reactionMessages = new Map<string, {
+      channelIdentifier: ChannelIdentifier,
+      messages: ChatUIMessageModel[],
+    }>();
+    newMsgs.forEach((message) => {
+      const key = trans2ChannelKey(message.channelIdentifier);
+      const group = reactionMessages.get(key) || {
+        channelIdentifier: message.channelIdentifier,
+        messages: [],
+      };
+      group.messages.push(message);
+      reactionMessages.set(key, group);
+    });
+    reactionMessages.forEach(({ channelIdentifier, messages: cachedMessages }) => {
+      this._checkAndFillReactions(channelIdentifier, cachedMessages);
+    });
+
     // Notify the UI of new messages.
     if (newMsgs.length) {
       this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.RECV_NEW_MESSAGES, newMsgs));
+      this._scheduleReferenceRefresh(newMsgs);
     }
 
     // Notify the application layer of non-persisted messages.
@@ -356,8 +723,79 @@ export class MessageModule extends ChatUIModule {
     }
   }
 
+  private _handleMessagesUpdated(messages: Message<any>[]): void {
+    const changed: ChatUIMessageModel[] = [];
+    const changedMessageIds = new Map<string, {
+      channelIdentifier: ChannelIdentifier;
+      messageIds: Set<string>;
+    }>();
+    // Reconcile all updated messages first. A single SDK event can contain a
+    // reference and its referenced message in either order.
+    messages.forEach((updated) => {
+      if (updated.messageId) {
+        this._invalidateReferenceRefresh(updated.channelIdentifier, updated.messageId);
+        const key = trans2ChannelKey(updated.channelIdentifier);
+        const group = changedMessageIds.get(key) || {
+          channelIdentifier: updated.channelIdentifier,
+          messageIds: new Set<string>(),
+        };
+        group.messageIds.add(updated.messageId);
+        changedMessageIds.set(key, group);
+      }
+      const cache = this._getExistCache(updated.channelIdentifier);
+      const current = cache?.histories.find((item) => item.messageId === updated.messageId);
+      if (!current) return;
+      // Replace the SDK object behind the existing UI model so getter-backed
+      // content is refreshed while the cached model/row identity is preserved.
+      (current as any).message = updated;
+      const timestamp = updated.updateInfo?.timestamp;
+      if (timestamp !== undefined && timestamp !== null) {
+        current.editStatus = ChatUIMessageEditStatus.SUCCESS;
+        current.editTimestamp = timestamp;
+        current.editDraft = undefined;
+      } else {
+        current.editTimestamp = undefined;
+        if (current.editStatus === ChatUIMessageEditStatus.SUCCESS) {
+          current.editStatus = undefined;
+        }
+      }
+      const opened = this.ctx.channelModule.getOpenedChannelModel();
+      if (opened?.channelIdentifier.isEqualTo(updated.channelIdentifier)
+        && opened.updatingMessageUId === updated.messageId) {
+        opened.updatingMessageUId = undefined;
+        current.editDraft = undefined;
+        this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.CHANNELS_ITEM_CHANGE, [opened]));
+      }
+      changed.push(current);
+    });
+    messages.forEach((updated) => {
+      const cache = this._getExistCache(updated.channelIdentifier);
+      cache?.histories.forEach((reference) => {
+        if (this._syncReferenceFromLocal(reference, updated)) changed.push(reference);
+      });
+    });
+    if (changed.length > 0) {
+      this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, changed));
+    }
+    changedMessageIds.forEach(({ channelIdentifier, messageIds }) => {
+      this._scheduleReferenceRefreshForIds(channelIdentifier, messageIds);
+    });
+  }
+
   private _handleMessagesDeleted(messages: MessageDeletedInfo[]): void {
+    const deletedMessageIds = new Map<string, {
+      channelIdentifier: ChannelIdentifier;
+      messageIds: Set<string>;
+    }>();
     const deletedList: DeleteMessageData[] = messages.map(({ channelIdentifier, messageId, operationTime }) => {
+      this._invalidateReferenceRefresh(channelIdentifier, messageId);
+      const key = trans2ChannelKey(channelIdentifier);
+      const group = deletedMessageIds.get(key) || {
+        channelIdentifier,
+        messageIds: new Set<string>(),
+      };
+      group.messageIds.add(messageId);
+      deletedMessageIds.set(key, group);
       const info: DeleteMessageData = { channelIdentifier, messageId };
       const cached = this._getOrCreateCache(channelIdentifier, operationTime, false, true);
       if (cached.histories.length > 0) {
@@ -365,12 +803,25 @@ export class MessageModule extends ChatUIModule {
         if (index !== -1) {
           // Replace the original cached message.
           const [target] = cached.histories.splice(index, 1);
+          const opened = this.ctx.channelModule.getOpenedChannelModel();
+          if (opened?.channelIdentifier.isEqualTo(channelIdentifier)
+            && opened.updatingMessageUId === target.messageId) {
+            opened.updatingMessageUId = undefined;
+            target.editStatus = undefined;
+            target.editDraft = undefined;
+            target.editTimestamp = undefined;
+            this.ctx.alert('alert.message.edit.recalled');
+            this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.CHANNELS_ITEM_CHANGE, [opened]));
+          }
           info.transactionId = target.transactionId;
         }
       }
       return info;
     });
     this.ctx.dispatchEvent(new ChatUIEvent(ChatUIEvents.MESSAGES_DELETED, deletedList));
+    deletedMessageIds.forEach(({ channelIdentifier, messageIds }) => {
+      this._scheduleReferenceRefreshForIds(channelIdentifier, messageIds);
+    });
   }
 
   // Messages to notify the UI about.
@@ -384,6 +835,292 @@ export class MessageModule extends ChatUIModule {
       }
     });
     return messages;
+  }
+
+  private _onMessageReactionChanged(event: MessageReactionChangedEvent): void {
+    if (!this.ctx.isMessageReactionEnabled) {
+      return;
+    }
+
+    const currentUserId = this.ctx.userId;
+    const pending = new Map<ChatUIMessageModel, {
+      reactions: ChatUIMessageReaction[],
+      hasReactions: boolean,
+      changed: boolean,
+      needsRefetch: boolean,
+    }>();
+
+    event.reactions.forEach((data) => {
+      const cached = this._getExistCache(data.channelIdentifier);
+      const message = cached?.histories.find((item) => item.messageId === data.messageId);
+      if (!message) {
+        return;
+      }
+
+      let state = pending.get(message);
+      if (!state) {
+        state = {
+          reactions: message.reactions.map((reaction) => ({
+            ...reaction,
+            users: [...reaction.users],
+          })),
+          hasReactions: message.message.hasReactions || message.reactions.length > 0,
+          changed: false,
+          needsRefetch: false,
+        };
+        pending.set(message, state);
+      }
+
+      if (data.operationType === MessageReactionOperationType.CLEARED) {
+        if (state.reactions.length > 0 || state.hasReactions) {
+          state.reactions = [];
+          state.hasReactions = false;
+          state.changed = true;
+        }
+        state.needsRefetch = false;
+        return;
+      }
+
+      const reactionIndex = state.reactions.findIndex((item) => item.reactionId === data.reactionId);
+      const reaction = state.reactions[reactionIndex];
+      const eventUserIds = data.users.map(({ userId }) => userId);
+
+      if (data.operationType === MessageReactionOperationType.ADDED) {
+        const hasCurrentUserReacted = Boolean(
+          reaction?.hasCurrentUserReacted || eventUserIds.includes(currentUserId),
+        );
+        const nextReaction: ChatUIMessageReaction = {
+          messageId: data.messageId,
+          reactionId: data.reactionId,
+          totalCount: data.totalCount,
+          hasCurrentUserReacted,
+          users: normalizeReactionUserIds(
+            [...(reaction?.users || []), ...eventUserIds],
+            currentUserId,
+            hasCurrentUserReacted,
+          ),
+          reactionTime: reaction?.reactionTime || data.users[0]?.reactionTime || Date.now(),
+        };
+        if (reaction) {
+          state.reactions.splice(reactionIndex, 1, nextReaction);
+        } else {
+          state.reactions.push(nextReaction);
+        }
+        state.hasReactions = true;
+        state.changed = true;
+        return;
+      }
+
+      if (data.operationType !== MessageReactionOperationType.REMOVED) {
+        return;
+      }
+
+      if (!reaction) {
+        // A removal only describes one reaction ID. Keep the summary hint so an
+        // incomplete local cache can be reconciled with the authoritative list.
+        if (!state.hasReactions) {
+          state.hasReactions = true;
+          state.changed = true;
+        }
+        state.needsRefetch = true;
+        return;
+      }
+
+      if (data.totalCount <= 0) {
+        state.reactions.splice(reactionIndex, 1);
+        if (state.reactions.length === 0) {
+          state.hasReactions = true;
+          state.needsRefetch = true;
+        }
+        state.changed = true;
+        return;
+      }
+
+      const removedUserIds = new Set(eventUserIds);
+      const remainingUserIds = reaction.users.filter((userId) => !removedUserIds.has(userId));
+      const removedCachedUser = remainingUserIds.length !== reaction.users.length;
+      const hasCurrentUserReacted = !removedUserIds.has(currentUserId)
+        && (reaction.hasCurrentUserReacted || reaction.users.includes(currentUserId));
+      const users = normalizeReactionUserIds(
+        remainingUserIds,
+        currentUserId,
+        hasCurrentUserReacted,
+      );
+      state.reactions.splice(reactionIndex, 1, {
+        ...reaction,
+        totalCount: data.totalCount,
+        hasCurrentUserReacted,
+        users,
+      });
+      state.hasReactions = true;
+      state.changed = true;
+      if (
+        this.ctx.isShowMessageReactUsersEnabled
+        && removedCachedUser
+        && users.length < REACTION_USER_CACHE_SIZE
+        && data.totalCount >= REACTION_USER_CACHE_SIZE
+      ) {
+        state.needsRefetch = true;
+      }
+    });
+
+    const changedMessages: ChatUIMessageModel[] = [];
+    const refetchGroups = new Map<string, {
+      channelIdentifier: ChannelIdentifier,
+      messages: ChatUIMessageModel[],
+    }>();
+    pending.forEach((state, message) => {
+      if (state.changed) {
+        message.reactions = state.reactions;
+        message.message.hasReactions = state.hasReactions;
+        changedMessages.push(message);
+      }
+      if (state.needsRefetch) {
+        const key = trans2ChannelKey(message.channelIdentifier);
+        const group = refetchGroups.get(key) || {
+          channelIdentifier: message.channelIdentifier,
+          messages: [],
+        };
+        group.messages.push(message);
+        refetchGroups.set(key, group);
+      }
+    });
+
+    if (changedMessages.length > 0) {
+      this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, changedMessages));
+    }
+    refetchGroups.forEach(({ channelIdentifier, messages }) => {
+      this._checkAndFillReactions(channelIdentifier, messages, true);
+    });
+  }
+
+  private _checkAndFillReactions(
+    channelIdentifier: ChannelIdentifier,
+    messages: ChatUIMessageModel[],
+    force: boolean = false,
+  ): void {
+    if (!this.ctx.isMessageReactionEnabled) {
+      return;
+    }
+
+    const cached = this._getExistCache(channelIdentifier);
+    if (!cached) {
+      return;
+    }
+    const requests = new Map<string, ReactionSummaryRequest>();
+    const channelKey = trans2ChannelKey(channelIdentifier);
+    messages.forEach((message) => {
+      const current = cached.histories.find((item) => item.messageId === message.messageId);
+      const requestKey = `${channelKey}:${message.messageId}`;
+      if (
+        current !== message
+        || !message.isPersisted
+        || !message.messageId
+        || !message.message.hasReactions
+        || (!force && message.reactions.length > 0)
+      ) {
+        return;
+      }
+      const inFlight = this._reactionSummaryInFlight.get(requestKey);
+      if (inFlight?.message === message) {
+        if (force) inFlight.needsRefetch = true;
+        return;
+      }
+      requests.set(message.messageId, { message, reactions: message.reactions, needsRefetch: false });
+    });
+    if (requests.size === 0) {
+      return;
+    }
+    const requestList = Array.from(requests.values());
+    requestList.forEach(request => {
+      this._reactionSummaryInFlight.set(`${channelKey}:${request.message.messageId}`, request);
+    });
+    void this._batchGetMessageReactionSummaries(channelIdentifier, requestList);
+  }
+
+  private async _batchGetMessageReactionSummaries(
+    channelIdentifier: ChannelIdentifier,
+    requests: ReactionSummaryRequest[],
+  ): Promise<void> {
+    const channelKey = trans2ChannelKey(channelIdentifier);
+    const release = (batch: ReactionSummaryRequest[]) => {
+      const refetch: ChatUIMessageModel[] = [];
+      const cache = this._getExistCache(channelIdentifier);
+      batch.forEach(request => {
+        const { message } = request;
+        const key = `${channelKey}:${message.messageId}`;
+        if (this._reactionSummaryInFlight.get(key) !== request) return;
+        this._reactionSummaryInFlight.delete(key);
+        if (
+          cache?.histories.find(item => item.messageId === message.messageId) === message
+          && (request.needsRefetch || request.reactions !== message.reactions)
+        ) {
+          refetch.push(message);
+        }
+      });
+      if (refetch.length > 0) this._checkAndFillReactions(channelIdentifier, refetch, true);
+    };
+    const channel = createNexconnChannel(channelIdentifier);
+    if (!channel) {
+      release(requests);
+      return;
+    }
+
+    for (let offset = 0; offset < requests.length; offset += REACTION_SUMMARY_BATCH_SIZE) {
+      const batch = requests.slice(offset, offset + REACTION_SUMMARY_BATCH_SIZE);
+      try {
+        const cache = this._getExistCache(channelIdentifier);
+        const active = batch.filter(request => {
+          const { message } = request;
+          return this._reactionSummaryInFlight.get(`${channelKey}:${message.messageId}`) === request
+            && cache?.histories.find(item => item.messageId === message.messageId) === message
+            && message.message.hasReactions;
+        });
+        if (active.length === 0) continue;
+        active.forEach(request => {
+          request.reactions = request.message.reactions;
+          request.needsRefetch = false;
+        });
+        const result = await channel.getMessageReactionSummaries(
+          active.map(({ message }) => message.messageId),
+        );
+        if (!result.isOk) {
+          continue;
+        }
+
+        const currentCache = this._getExistCache(channelIdentifier);
+        if (!currentCache) {
+          continue;
+        }
+        const changedMessages: ChatUIMessageModel[] = [];
+        active.forEach((request) => {
+          const { message: requestedMessage } = request;
+          const currentMessage = currentCache.histories.find(
+            (item) => item.messageId === requestedMessage.messageId,
+          );
+          if (
+            this._reactionSummaryInFlight.get(`${channelKey}:${requestedMessage.messageId}`) !== request
+            || currentMessage !== requestedMessage
+            || request.needsRefetch
+            || currentMessage.reactions !== request.reactions
+          ) {
+            return;
+          }
+          currentMessage.reactions = (result.data?.[requestedMessage.messageId] || [])
+            .map((reaction) => normalizeMessageReaction(reaction, this.ctx.userId));
+          currentMessage.message.hasReactions = currentMessage.reactions.length > 0;
+          request.reactions = currentMessage.reactions;
+          changedMessages.push(currentMessage);
+        });
+        if (changedMessages.length > 0) {
+          this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, changedMessages));
+        }
+      } catch (error) {
+        this.logger.warn(LogTag.D, `getMessageReactionSummaries failed: ${error}`);
+      } finally {
+        release(batch);
+      }
+    }
   }
 
   /**
@@ -402,7 +1139,15 @@ export class MessageModule extends ChatUIModule {
    * @param timestamp
    * @param forward
    */
-  private async _requestHistoriesFromLib(channelIdentifier: ChannelIdentifier, timestamp: number, forward: boolean): Promise<{ hasMore: boolean, list: ChatUIMessageModel[], code: number }> {
+  private async _requestHistoriesFromLib(
+    channelIdentifier: ChannelIdentifier,
+    timestamp: number,
+    forward: boolean,
+    generation: number = this._historyGeneration,
+  ): Promise<{ hasMore: boolean, list: ChatUIMessageModel[], code: number }> {
+    if (generation !== this._historyGeneration) {
+      return { code: NCChatUICode.SUCCESS, hasMore: false, list: [] };
+    }
     const query = BaseChannel.createMessagesQuery({
       channelIdentifier,
       pageSize: MESSAGE_PAGE_SIZE,
@@ -410,12 +1155,18 @@ export class MessageModule extends ChatUIModule {
       isAscending: !forward,
     });
     const res = await query.loadNextPage();
+    if (generation !== this._historyGeneration) {
+      return { code: NCChatUICode.SUCCESS, hasMore: false, list: [] };
+    }
     if (!res.isOk) {
       return { code: res.code, hasMore: true, list: [] };
     }
     const hasMore = query.hasNext;
     const { data: list } = res.data!;
     let tmpList = await this._handleTransIAReceivedMessages(list, channelIdentifier);
+    if (generation !== this._historyGeneration) {
+      return { code: NCChatUICode.SUCCESS, hasMore: false, list: [] };
+    }
 
     // Cached data must exist here, so arguments after the first have no practical effect.
     const cached = this._getOrCreateCache(channelIdentifier, timestamp, timestamp !== 0, true);
@@ -488,10 +1239,15 @@ export class MessageModule extends ChatUIModule {
     channelIdentifier: ChannelIdentifier,
     timestamp: number = 0,
     forward: boolean = true,
+    generation: number = this._historyGeneration,
   ): Promise<{ hasMore: boolean, list: ChatUIMessageModel[], code: number }> {
+    if (generation !== this._historyGeneration) {
+      return { hasMore: false, list: [], code: NCChatUICode.SUCCESS };
+    }
     // Get cached data.
     const cached = this._getOrCreateCache(channelIdentifier, timestamp, timestamp !== 0, true);
-    const { histories, hasMoreAfterEndTime, hasMoreBeforeStartTime, startTime, endTime } = cached;
+    const { hasMoreAfterEndTime, hasMoreBeforeStartTime, startTime, endTime } = cached;
+    const histories = cached.histories.filter((message) => !this._isInsertedMessage(message));
     if (!hasMoreAfterEndTime && timestamp === 0 && forward) {
       // Ensure switching channels can fetch current history when endTime predates the last cached sentTime.
       const messageTime = histories[histories.length - 1]?.sentTime || 0
@@ -503,7 +1259,7 @@ export class MessageModule extends ChatUIModule {
 
     if (!this._ifTimeCoincides(cached, timestamp)) {
       // Request remote data when the timestamp does not overlap the cache.
-      return this._requestHistoriesFromLib(channelIdentifier, timestamp, forward);
+      return this._requestHistoriesFromLib(channelIdentifier, timestamp, forward, generation);
     }
 
     // Get all cached messages in the requested time range.
@@ -513,13 +1269,15 @@ export class MessageModule extends ChatUIModule {
       list = histories.slice(0, index + 1);
     } else {
       const index = histories.findIndex((item) => item.sentTime > timestamp);
-      list = histories.slice(index);
+      list = index === -1 ? [] : histories.slice(index);
     }
 
     const hasMore = forward ? hasMoreBeforeStartTime : hasMoreAfterEndTime;
 
     if (list.length < MESSAGE_PAGE_SIZE) {
-      return await this._reqHasMoreHistories(hasMore, startTime, endTime, forward, channelIdentifier, timestamp, list);
+      return await this._reqHasMoreHistories(
+        hasMore, startTime, endTime, forward, channelIdentifier, timestamp, list, generation,
+      );
     }
 
     let msgList = forward ? list.slice(list.length - MESSAGE_PAGE_SIZE) : list.slice(0, MESSAGE_PAGE_SIZE);
@@ -528,6 +1286,9 @@ export class MessageModule extends ChatUIModule {
     if (this.ctx.isReadReceiptV5 && channelIdentifier.channelType === ChannelType.GROUP) {
       // Refresh read state and update the cache.
       await this._handleReadReceiptV5(channelIdentifier, msgList);
+      if (generation !== this._historyGeneration) {
+        return { hasMore: false, list: [], code: NCChatUICode.SUCCESS };
+      }
       // Update cached messages synchronously.
       msgList.forEach((msg) => {
         const index = cached.histories.findIndex((item) => item.messageId === msg.messageId);
@@ -553,17 +1314,24 @@ export class MessageModule extends ChatUIModule {
     forward: boolean,
     channelIdentifier: ChannelIdentifier,
     timestamp: number = 0,
-    list: ChatUIMessageModel[] = []
+    list: ChatUIMessageModel[] = [],
+    generation: number = this._historyGeneration,
   ): Promise<{ hasMore: boolean, list: ChatUIMessageModel[], code: number }> {
+    if (generation !== this._historyGeneration) {
+      return { hasMore: false, list: [], code: NCChatUICode.SUCCESS };
+    }
     if (hasMore) {
       // Fetch more history from IMLib when the cache is insufficient and more data exists.
       const forwardTime = startTime === 0 ? 0 : startTime + 1;
       const backwardTime = endTime === 0 ? 0 : endTime - 1;
       const tmpTimestamp = forward ? forwardTime : backwardTime;
-      const { code } = await this._requestHistoriesFromLib(channelIdentifier, tmpTimestamp, forward);
+      const { code } = await this._requestHistoriesFromLib(channelIdentifier, tmpTimestamp, forward, generation);
+      if (generation !== this._historyGeneration) {
+        return { hasMore: false, list: [], code: NCChatUICode.SUCCESS };
+      }
       if (code === NCChatUICode.SUCCESS) {
         // Continue recursively.
-        return this._reqHistoriesHandler(channelIdentifier, timestamp, forward);
+        return this._reqHistoriesHandler(channelIdentifier, timestamp, forward, generation);
       }
       // Return cached data when this request fails.
       return { hasMore, list, code };
@@ -578,12 +1346,22 @@ export class MessageModule extends ChatUIModule {
    * @param timestamp - Timestamp. Defaults to the current time; results exclude messages at this timestamp.
    * @param forward - Whether to retrieve messages before the timestamp. Defaults to true.
    */
-  reqHistories(
+  async reqHistories(
     identifier: ChannelIdentifier,
     timestamp: number = 0,
     forward: boolean = true
   ): Promise<{ hasMore: boolean, list: ChatUIMessageModel[], code: number }> {
-    return this._reqHistoriesHandler(identifier, timestamp, forward);
+    const generation = this._historyGeneration;
+    const result = await this._reqHistoriesHandler(identifier, timestamp, forward, generation);
+    if (generation !== this._historyGeneration) {
+      return { ...result, hasMore: false, list: [] };
+    }
+    if (result.code === NCChatUICode.SUCCESS) {
+      result.list = this._mergeInsertedMessages(identifier, result.list, timestamp, forward, result.hasMore);
+    }
+    this._checkAndFillReactions(identifier, result.list);
+    this._scheduleReferenceRefresh(result.list);
+    return result;
   }
 
   private emitMessageWillSend(channelIdentifier: ChannelIdentifier, params: SendMessageParams<any>): void {
@@ -601,7 +1379,9 @@ export class MessageModule extends ChatUIModule {
       return NCResult.fail(NCChatUICode.INVALID_CHANNEL);
     }
 
+    const generation = this._historyGeneration;
     this.emitMessageWillSend(channelIdentifier, params);
+    if (generation !== this._historyGeneration) return NCResult.fail(NCChatUICode.TASK_CANCEL);
 
     const message: Message = Helper.createMessage(channelIdentifier, params)
     const msg = new ChatUIMessageModel(message);
@@ -632,6 +1412,8 @@ export class MessageModule extends ChatUIModule {
       transactionId: msg.transactionId,
       params,
     });
+    if (generation !== this._historyGeneration) return NCResult.fail(NCChatUICode.TASK_CANCEL);
+    if (res.code === NCChatUICode.TASK_CANCEL) return res;
     if (!res.isOk) {
       msg.sentStatus = SentStatus.FAILED;
     } else {
@@ -639,12 +1421,16 @@ export class MessageModule extends ChatUIModule {
 
       if (this.ctx.isReadReceiptV5 && msg.channelType === ChannelType.GROUP) {
         await this._handleReadReceiptV5(channelIdentifier, [msg]);
+        if (generation !== this._historyGeneration) return NCResult.fail(NCChatUICode.TASK_CANCEL);
       }
     }
 
     if (msg.isPersisted) {
       // Notify the UI to update the message list.
       this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, [msg]));
+      if (res.isOk) {
+        this._scheduleReferenceRefresh([msg]);
+      }
     }
     return res;
   }
@@ -665,6 +1451,7 @@ export class MessageModule extends ChatUIModule {
     channelIdentifier: ChannelIdentifier,
     files: File[]
   ): Promise<void> {
+    const generation = this._historyGeneration;
     if (files.length > 99) {
       this.ctx.alert('alert.pickfiles.maxcount', '99');
       return;
@@ -697,11 +1484,12 @@ export class MessageModule extends ChatUIModule {
 
     await Promise.all(valid.map(async (file) => {
       const paramsRes: NCResult<SendMessageParams<any>> = await msgCreator(file);
-      if (!paramsRes.isOk) {
+      if (generation !== this._historyGeneration || !paramsRes.isOk) {
         return;
       }
       const params = paramsRes.data!;
       this.emitMessageWillSend(channelIdentifier, params);
+      if (generation !== this._historyGeneration) return;
       const message: Message = Helper.createMessage(channelIdentifier, params);
       message.sentTime = getServerTime();
       const model = new ChatUIMessageModel(message);
@@ -711,6 +1499,10 @@ export class MessageModule extends ChatUIModule {
       models.push(model);
       sendParamMap.set(model, params);
     }));
+
+    if (generation !== this._historyGeneration || models.length === 0) {
+      return;
+    }
 
     // Mark media messages as failed while offline, matching text message behavior.
     const offline = this.ctx.status !== ConnectionStatus.CONNECTED;
@@ -737,7 +1529,7 @@ export class MessageModule extends ChatUIModule {
     this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.INSERT_NEW_MESSAGES, models), false);
 
     // Return while offline without entering the upload or sending queues.
-    if (offline) {
+    if (generation !== this._historyGeneration || offline) {
       return;
     }
 
@@ -745,6 +1537,7 @@ export class MessageModule extends ChatUIModule {
     const promises = models.map((msg) => {
       const { transactionId, file } = msg;
       const onProgress = (loaded: number, total: number) => {
+        if (generation !== this._historyGeneration) return;
         const progress = Math.floor(loaded * 100 / total);
         this.logger.debug(LogTag.L_UPLOAD_FILE_O, `${transactionId}, progress: ${progress}`);
         // Dispatch a progress event.
@@ -757,7 +1550,9 @@ export class MessageModule extends ChatUIModule {
     });
     for (let uploadPromise of promises) {
       // Await uploads sequentially to preserve send order.
-      const { isOk, data } = await uploadPromise;
+      const { isOk, code, data } = await uploadPromise;
+      if (generation !== this._historyGeneration) return;
+      if (code === NCChatUICode.TASK_CANCEL) continue;
 
       const { message } = data!;
 
@@ -785,7 +1580,7 @@ export class MessageModule extends ChatUIModule {
       this._updateHttpUrl(message, httpUrl);
 
       // Add messages to the sending queue in order.
-      this._push2SendQueue(channelIdentifier, message, sendParamMap.get(message)!);
+      this._push2SendQueue(channelIdentifier, message, sendParamMap.get(message)!, generation);
     }
   }
 
@@ -839,21 +1634,165 @@ export class MessageModule extends ChatUIModule {
     const msg = new ChatUIMessageModel(message);
     msg.transactionId = this._createTransactionId();
 
-    const cached = this._getOrCreateCache(channelIdentifier, msg.sentTime + 1, true, true);
-    let index = findLastIndex(cached.histories, (item) => item.messageId === msg.messageId || item.clientId === msg.clientId);
+    const cached = this._getOrCreateCache(channelIdentifier, 0, true, true);
+    this._insertedMessageIds.add(msg.transactionId);
+    let index = findLastIndex(cached.histories, (item) => this._isSameMessage(item, msg));
     if (index !== -1) {
+      const previousId = cached.histories[index].transactionId;
+      if (previousId !== undefined) this._insertedMessageIds.delete(previousId);
       cached.histories.splice(index, 1, msg);
     } else {
       index = findLastIndex(cached.histories, (item) => item.sentTime <= msg.sentTime);
       if (index === -1) {
         cached.histories.unshift(msg);
       } else {
-        cached.histories.splice(index, 0, msg);
+        cached.histories.splice(index + 1, 0, msg);
       }
     }
+    this._checkAndFillReactions(channelIdentifier, [msg]);
     // Notify the UI to update the message list.
     this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.INSERT_NEW_MESSAGES, [msg]));
     return NCResult.ok();
+  }
+
+  public async updateMessageReaction(
+    message: ChatUIMessageModel,
+    reactionId: string,
+    isRemove: boolean,
+  ): Promise<void> {
+    if (
+      !this.ctx.isMessageReactionEnabled
+      || message.sentStatus !== SentStatus.SENT
+      || !message.messageId
+    ) {
+      return;
+    }
+
+    let result: NCResult;
+    try {
+      result = await (isRemove
+        ? message.message.removeReaction({ reactionId })
+        : message.message.addReaction({ reactionId }));
+    } catch (error) {
+      this.ctx.alert('alert.reaction.failed');
+      return;
+    }
+    if (!result.isOk) {
+      const messageKey = !isRemove && (result.code === 26323 || result.code === 26324)
+        ? 'alert.reaction.limit.reached' as const
+        : 'alert.reaction.failed' as const;
+      this.ctx.alert(messageKey);
+      return;
+    }
+
+    const cachedMessage = this._getExistCache(message.channelIdentifier)?.histories
+      .find((item) => item.messageId === message.messageId);
+    const currentReaction = cachedMessage?.reactions.find((item) => item.reactionId === reactionId)
+      || message.reactions.find((item) => item.reactionId === reactionId);
+    if (!!currentReaction?.hasCurrentUserReacted === !isRemove) {
+      return;
+    }
+    const totalCount = Math.max((currentReaction?.totalCount || 0) + (isRemove ? -1 : 1), 0);
+    const eventData: MessageReactionEventData = {
+      channelIdentifier: message.channelIdentifier,
+      messageId: message.messageId,
+      reactionId,
+      operationType: isRemove
+        ? MessageReactionOperationType.REMOVED
+        : MessageReactionOperationType.ADDED,
+      users: [{ userId: this.ctx.userId, reactionTime: Date.now() }],
+      totalCount,
+    };
+    this._onMessageReactionChanged({ reactions: [eventData] });
+  }
+
+  private _getCachedMessage(message: ChatUIMessageModel): ChatUIMessageModel | undefined {
+    return this._getExistCache(message.channelIdentifier)?.histories.find((item) => (
+      (message.messageId && item.messageId === message.messageId)
+      || (!!message.transactionId && item.transactionId === message.transactionId)
+    ));
+  }
+
+  public setMessageEditDraft(message: ChatUIMessageModel, draft: string): void {
+    const cached = this._getCachedMessage(message);
+    if (!cached || cached.editStatus === ChatUIMessageEditStatus.UPDATING) return;
+    cached.editDraft = draft;
+    this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, [cached]));
+  }
+
+  public clearMessageEdit(
+    message: ChatUIMessageModel,
+    notify: boolean = false,
+    clearSuccess: boolean = false,
+  ): void {
+    const cached = this._getCachedMessage(message) || message;
+    const timestamp = cached.message.updateInfo?.timestamp;
+    cached.editDraft = undefined;
+    if (!clearSuccess && timestamp !== undefined && timestamp !== null) {
+      cached.editStatus = ChatUIMessageEditStatus.SUCCESS;
+      cached.editTimestamp = timestamp;
+    } else {
+      cached.editStatus = undefined;
+      cached.editTimestamp = undefined;
+    }
+    const opened = this.ctx.channelModule.getOpenedChannelModel();
+    if (opened?.channelIdentifier.isEqualTo(cached.channelIdentifier)
+      && opened.updatingMessageUId === cached.messageId) {
+      opened.updatingMessageUId = undefined;
+      this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.CHANNELS_ITEM_CHANGE, [opened]));
+    }
+    if (notify) this.ctx.alert('alert.message.edit.discarded');
+    this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, [cached]));
+  }
+
+  public async updateMessage(message: ChatUIMessageModel, draft: string): Promise<NCResult> {
+    const cached = this._getCachedMessage(message);
+    if (!cached || !cached.messageId || !draft.trim()
+      || cached.editStatus === ChatUIMessageEditStatus.UPDATING) {
+      return NCResult.fail(NCChatUICode.INVALID_MESSAGE);
+    }
+    const editWindowMinutes = NCEngine.getAppSettings().data?.messageModifiableMinutes;
+    const isWithinEditWindow = typeof editWindowMinutes === 'number'
+      && editWindowMinutes > 0
+      && Date.now() - cached.sentTime < editWindowMinutes * 60 * 1000;
+    if (!isWithinEditWindow) {
+      this.clearMessageEdit(cached, false, true);
+      this.ctx.alert('message.edit.expired');
+      return NCResult.fail(NCChatUICode.MODIFIED_MESSAGE_TIMEOUT);
+    }
+    cached.editDraft = draft;
+    cached.editStatus = ChatUIMessageEditStatus.UPDATING;
+    this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, [cached]));
+    const editGeneration = this._editGeneration;
+
+    const content = cached.messageType === MessageType.REFERENCE
+      ? { ...(cached.content as ReferenceMessageContent), text: draft }
+      : { ...(cached.content as TextMessageContent), text: draft };
+    try {
+      const result = await BaseChannel.updateMessage({
+        channelIdentifier: cached.channelIdentifier,
+        messageId: cached.messageId,
+        messageType: cached.messageType,
+        content,
+      });
+      if (editGeneration !== this._editGeneration || !this._getCachedMessage(cached)) return result;
+      if (!result.isOk) {
+        cached.editStatus = ChatUIMessageEditStatus.FAILED;
+        this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, [cached]));
+      }
+      return result;
+    } catch (error) {
+      if (editGeneration !== this._editGeneration || !this._getCachedMessage(cached)) {
+        return NCResult.fail(-1);
+      }
+      cached.editStatus = ChatUIMessageEditStatus.FAILED;
+      this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, [cached]));
+      return NCResult.fail(-1);
+    }
+  }
+
+  public retryMessageUpdate(message: ChatUIMessageModel): Promise<NCResult> {
+    return this.updateMessage(message, message.editDraft || '');
   }
 
   /**
@@ -882,6 +1821,12 @@ export class MessageModule extends ChatUIModule {
     if (messages.length === 0) {
       return;
     }
+
+    const opened = this.ctx.channelModule.getOpenedChannelModel();
+    const activeMessage = opened?.updatingMessageUId
+      ? messages.find((message) => message.messageId === opened.updatingMessageUId)
+      : undefined;
+    if (activeMessage) this.clearMessageEdit(activeMessage, true, true);
 
     // Keep sent or failed messages; sending messages cannot be recalled or deleted.
     const sentList: ChatUIMessageModel[] = [];
@@ -976,10 +1921,21 @@ export class MessageModule extends ChatUIModule {
     if (reqSuccess.length && history && history.histories.length) {
       reqSuccess.forEach((message) => {
         const index = history.histories.findIndex((item) => item.messageId === message.messageId);
+        // An SDK deletion event may have already removed this message while the request was pending.
+        if (index === -1) {
+          return;
+        }
         // Delete from the local cache.
         const [target] = history.histories.splice(index, 1);
         succeed.push({ channelIdentifier, messageId: target.messageId, transactionId: target.transactionId });
       })
+    }
+
+    if (reqSuccess.length) {
+      this._scheduleReferenceRefreshForIds(
+        channelIdentifier,
+        reqSuccess.map((message) => message.messageId).filter(Boolean),
+      );
     }
 
     // Ignore deletion failures; local data is removed only after remote deletion succeeds.
@@ -1096,15 +2052,17 @@ export class MessageModule extends ChatUIModule {
   private async _push2SendQueue(
     channelIdentifier: ChannelIdentifier,
     message: ChatUIMessageModel,
-    params: SendMessageParams
+    params: SendMessageParams,
+    generation = this._historyGeneration,
   ) {
-    const { isOk, data } = await this._sendQueue.push({
+    if (generation !== this._historyGeneration) return;
+    const { isOk, code, data } = await this._sendQueue.push({
       channelIdentifier,
       message,
       transactionId: message.transactionId!,
       params,
     });
-
+    if (generation !== this._historyGeneration || code === NCChatUICode.TASK_CANCEL) return;
 
     if (!isOk) {
       message.sentStatus = SentStatus.FAILED;
@@ -1127,9 +2085,15 @@ export class MessageModule extends ChatUIModule {
 
     // Notify the UI to update the message list.
     this.ctx.dispatchEvent(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, [message]));
+    if (isOk) {
+      this._scheduleReferenceRefresh([message]);
+    }
   }
 
   removeCachedMessages(channelIdentifier: ChannelIdentifier): void {
+    this._getExistCache(channelIdentifier)?.histories.forEach((message) => {
+      if (message.transactionId !== undefined) this._insertedMessageIds.delete(message.transactionId);
+    });
     this._histories.delete(trans2ChannelKey(channelIdentifier));
   }
 
@@ -1172,6 +2136,7 @@ export class MessageModule extends ChatUIModule {
    * @param message
    */
   async resendMessage(message: ChatUIMessageModel): Promise<void> {
+    const generation = this._historyGeneration;
     const { transactionId } = message;
     const cached = this._getExistCache(message.channelIdentifier);
     if (!cached) {
@@ -1195,9 +2160,11 @@ export class MessageModule extends ChatUIModule {
       cachedMessage.progress = 0;
       // Dispatch an event to update UI state.
       this.ctx.emit(new ChatUIEvent(InnerEvent.MESSAGE_STATE_CHANGE, [cachedMessage]));
+      if (generation !== this._historyGeneration) return;
 
       // Upload the file again.
       const onProgress = (loaded: number, total: number) => {
+        if (generation !== this._historyGeneration) return;
         const progress = Math.floor(loaded * 100 / total);
         if (cachedMessage.progress !== progress) {
           cachedMessage.progress = progress;
@@ -1205,6 +2172,7 @@ export class MessageModule extends ChatUIModule {
         }
       }
       const { code, data } = await this._uploadQueue.push({ message: cachedMessage, transactionId, onProgress });
+      if (generation !== this._historyGeneration || code === NCChatUICode.TASK_CANCEL) return;
       if (code !== NCChatUICode.SUCCESS) {
         cachedMessage.sentStatus = SentStatus.FAILED;
         cachedMessage.progress = -1;
@@ -1219,6 +2187,7 @@ export class MessageModule extends ChatUIModule {
 
     const params = new SendMessageParams(cachedMessage.content, cachedMessage.messageType);
     this.emitMessageWillSend(cachedMessage.channelIdentifier, params);
+    if (generation !== this._historyGeneration) return;
     const sentMessage = Helper.createMessage(cachedMessage.channelIdentifier, params);
     const resentMessage = new ChatUIMessageModel(sentMessage);
     resentMessage.transactionId = cachedMessage.transactionId;
@@ -1234,6 +2203,7 @@ export class MessageModule extends ChatUIModule {
       resentMessage.channelIdentifier,
       resentMessage,
       params,
+      generation,
     );
   }
 
@@ -1249,7 +2219,7 @@ export class MessageModule extends ChatUIModule {
     list: ChatUIMessageModel[]
   ): Promise<void> {
     if (this.ctx.isReadReceiptV5) {
-      this._sendReadReceiptMessageV5(channelIdentifier, list);
+      await this._sendReadReceiptMessageV5(channelIdentifier, list);
     }
   }
 

@@ -33,6 +33,7 @@ export class ScrollbarThumbProvider extends LitElement {
 
   private _cursorDown = false;
   private _originalOnSelectStart: ((this: GlobalEventHandlers, ev: Event) => any) | null = null;
+  private _preventSelectStart = () => false;
   private _thumbClickY = 0;
 
   private get _trackEl(): HTMLDivElement | null {
@@ -71,11 +72,12 @@ export class ScrollbarThumbProvider extends LitElement {
 
   private _startDrag(e: MouseEvent) {
     e.stopImmediatePropagation();
+    if (this._cursorDown) return;
     this._cursorDown = true;
     document.addEventListener('mousemove', this._mouseMoveHandler);
     document.addEventListener('mouseup', this._mouseUpHandler);
     this._originalOnSelectStart = document.onselectstart;
-    document.onselectstart = () => false;
+    document.onselectstart = this._preventSelectStart;
   }
 
   private _mouseMoveHandler = (e: MouseEvent) => {
@@ -93,17 +95,15 @@ export class ScrollbarThumbProvider extends LitElement {
     this._thumbClickY = 0;
     document.removeEventListener('mousemove', this._mouseMoveHandler);
     document.removeEventListener('mouseup', this._mouseUpHandler);
-    if (document.onselectstart !== this._originalOnSelectStart) {
+    if (document.onselectstart === this._preventSelectStart) {
       document.onselectstart = this._originalOnSelectStart;
     }
+    this._originalOnSelectStart = null;
   };
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (document.onselectstart !== this._originalOnSelectStart) {
-      document.onselectstart = this._originalOnSelectStart;
-    }
-    document.removeEventListener('mouseup', this._mouseUpHandler);
+    this._mouseUpHandler();
   }
 
   render() {

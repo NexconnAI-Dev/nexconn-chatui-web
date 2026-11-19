@@ -11,6 +11,7 @@ import { ChatUIEvents, MessageLinckClick, MessagesDeletedEvent } from '../../../
 import { I18nController } from '../../i18n/lit';
 import { ChatUIMessageModel } from '@lib/models/NCUIMessageModel';
 import { MessageType, CombineMessageContent } from '@nexconn/chat';
+import { MODAL_CLOSE_ICON } from '../../../assets';
 
 export class ModalCombineProvider extends LitElement {
   static styles = css`
@@ -44,24 +45,52 @@ export class ModalCombineProvider extends LitElement {
     .nc-imkit-combine-header {
       background-color: #FFFFFF;
       position: relative;
+      flex-shrink: 0;
     }
     .title {
       text-align: center;
       line-height: 19px;
       font-size: 12px;
-      padding: 11px 0;
+      padding: 11px 50px;
     }
     .close {
       position: absolute;
       top: 50%;
-      right: 15px;
-      padding: 0 5px;
+      right: 5px;
+      width: 40px;
+      height: 40px;
+      padding: 5px;
+      border: 0;
+      background: transparent;
       transform: translate(0, -50%);
       cursor: pointer;
+    }
+    .close img { width: 30px; height: 30px; }
+    @media (max-width: 768px) {
+      .nc-chatui-combine-box {
+        width: 100%;
+        height: 100%;
+        top: 0;
+        left: 0;
+        transform: none;
+        border-radius: 0;
+      }
     }
     .nc-imkit-combine-body {
       flex: 1;
       overflow: hidden;
+    }
+    .load-error {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      padding: 20px;
+      box-sizing: border-box;
+      color: #7C838E;
+      font-size: 14px;
+      line-height: 20px;
+      text-align: center;
     }
     .nc-imkit-iframe {
       height: 100%;
@@ -77,8 +106,10 @@ export class ModalCombineProvider extends LitElement {
     }
     .nc-chatui-msg-avatar {
       padding: 0 8px;
+      flex-shrink: 0;
     }
     .nc-chatui-msg-bubble {
+      min-width: 0;
       padding: 0 10px 8px 12px;
       border-radius: 0px 8px 8px;
       font-size: 12px;
@@ -112,6 +143,7 @@ export class ModalCombineProvider extends LitElement {
   @property({ type: Object }) declare message: ChatUIMessageModel<CombineMessageContent>;
 
   @state() private declare msgContent: CombineMessageContent;
+  @state() private declare loadFailed: boolean;
 
   private i18n = new I18nController(this);
 
@@ -127,6 +159,7 @@ export class ModalCombineProvider extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this.loadFailed = false;
     // Copy content into msgContent so modal edits do not mutate the message list or affect forwarding.
     const content = this.msgContent = { ...this.message.content };
     // Listen for message deletion events.
@@ -134,10 +167,20 @@ export class ModalCombineProvider extends LitElement {
 
     if (content.remoteUrl) {
       fetch(content.remoteUrl)
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
+          if (!this.isConnected || this.msgContent !== content) return;
+          if (!Array.isArray(data)) {
+            this.loadFailed = true;
+            return;
+          }
           // Reassign msgContent to trigger a view update.
           this.msgContent = { ...content, msgList: data };
+        })
+        .catch(() => {
+          if (this.isConnected && this.msgContent === content) {
+            this.loadFailed = true;
+          }
         });
     }
   }
@@ -230,6 +273,7 @@ export class ModalCombineProvider extends LitElement {
   private handleBubbleClick(item: ChatUIMessageModel<any>) {
     switch (item.messageType) {
       case MessageType.IMAGE:
+      case MessageType.GIF:
       case MessageType.SHORT_VIDEO: {
         ctx().emit(new ChatUIEvent(ChatUIEvents.MEDIA_MESSAGE_MODAL_EVENT, item));
         break;
@@ -253,7 +297,7 @@ export class ModalCombineProvider extends LitElement {
   };
 
   render() {
-    const renderList = this.getMessageRenderList();
+    const renderList = this.loadFailed ? [] : this.getMessageRenderList();
     const title = this.getTitle();
 
     return html`
@@ -261,10 +305,14 @@ export class ModalCombineProvider extends LitElement {
         <div class="nc-chatui-combine-box" @click=${(e: Event) => e.stopPropagation()}>
           <div class="nc-imkit-combine-header">
             <div class="title">${title}</div>
-            <span class="close" @click=${this.handleCancel}>x</span>
+            <button class="close" type="button" aria-label=${this.i18n.t('dialog.cancel.msg')} @click=${this.handleCancel}>
+              <img src=${MODAL_CLOSE_ICON} alt="">
+            </button>
           </div>
           <div class="nc-imkit-combine-body">
-            ${html`
+            ${this.loadFailed ? html`
+              <div class="load-error" role="status">${this.i18n.t('combine-msg.load-failed')}</div>
+            ` : html`
               <nc-scrollbar-provider>
                 <div style="padding: 10px 20px;">
                   ${renderList.map(item => {

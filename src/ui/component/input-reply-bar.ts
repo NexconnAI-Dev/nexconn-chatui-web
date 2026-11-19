@@ -25,6 +25,7 @@ export class InputReplyBarElement extends LitElement {
       box-sizing: border-box;
       width: calc(100% - 50px - 16px);
       flex: 1;
+      min-width: 0;
       display: flex;
       height: 100%;
       background-color: #F3F5FA;
@@ -34,6 +35,7 @@ export class InputReplyBarElement extends LitElement {
     }
     .message-desc {
       flex: 1;
+      min-width: 0;
       display: flex;
       box-sizing: border-box;
       flex-direction: column;
@@ -57,9 +59,18 @@ export class InputReplyBarElement extends LitElement {
       flex-shrink: 0;
     }
     .desc-text {
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .edited-marker {
+      flex-shrink: 0;
+      color: #7C838E;
+      font-size: 12px;
+      white-space: nowrap;
+      -webkit-user-select: none;
+      user-select: none;
     }
     .thumbnail {
       flex-shrink: 0;
@@ -113,7 +124,7 @@ export class InputReplyBarElement extends LitElement {
             <div class="desc">
               <span class="reply-prefix">${this.reply}:</span>
               <span class="desc-text">${this.info.digest}</span>
-              ${this.info.thumbnail ? html`<img class="thumbnail" src=${this.info.thumbnail} alt="Thumbnail Image">` : ''}
+              ${this.info.isEdited ? html`<span class="edited-marker">(${this.i18n.t('message.edit.edited')})</span>` : ''}
             </div>
           </div>
         </div>

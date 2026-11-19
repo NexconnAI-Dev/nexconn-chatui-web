@@ -1,8 +1,8 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { state } from 'lit/decorators.js';
 import {
-  ctx, channelList, openedChannel as opened,
-  handleShowSentStatus, textarea, unreadCountBottom, getMessageDigest,
+  ctx, channelList, channelListHasMore, loadMoreChannels, openedChannel as opened,
+  handleShowSentStatus, textarea, getMessageDigest,
 } from './context';
 import { ChatUIChannelModel } from '@lib/models/NCUIChannelModel';
 import { I18nController } from '../i18n/lit';
@@ -11,13 +11,18 @@ import { ChatUIEvent } from '../../core/ChatUIEvent';
 import { formatTime, isMobileDevice, trans2ChannelKey } from '../../helper';
 import { LanguagePackEntries } from '../../languages';
 import { ChatUIMessageModel } from '@lib/models/NCUIMessageModel';
-import {
-  ChannelsItemOrderChangeEvent, ChannelsItemDelteedEvent,
-  ChannelListFirstScreenRenderingEvent, ChannelListItemChangeEvent,
-  InnerEvent, ChatUIEvents,
-} from '@lib/core/EventDefined';
+import { ChatUIEvents } from '@lib/core/EventDefined';
 import { NCChatUICode } from '@lib/enums/NCChatUICode';
-import { ChannelType } from '@nexconn/chat';
+import { ChannelType, FileMessageContent, MessageType } from '@nexconn/chat';
+import { createLongPressHandlers } from '../long-press';
+
+const getChannelLatestMessageDigest = (message: ChatUIMessageModel | null): string => {
+  const digest = getMessageDigest(message);
+  if (!message || message.messageType !== MessageType.FILE) return digest;
+
+  const fileName = (message.content as FileMessageContent | null | undefined)?.name;
+  return fileName ? `${digest}${fileName}` : digest;
+};
 
 export class ChannelListProvider extends LitElement {
   static styles = css`
@@ -28,6 +33,9 @@ export class ChannelListProvider extends LitElement {
     .nc-channel-wrap {
       padding: 0 10px;
       position: relative;
+    }
+    @media (max-width: 768px) {
+      .nc-channel-list { -webkit-touch-callout: none; user-select: none; }
     }
     .nc-channel-list-menu {
       position: absolute;
@@ -51,16 +59,15 @@ export class ChannelListProvider extends LitElement {
   `;
 
   private i18n = new I18nController(this);
-  private _signalController = new SignalController(this, [opened]);
+  private longPress = createLongPressHandlers();
+  private _signalController = new SignalController(this, [opened, channelList, channelListHasMore]);
 
   @state() private declare isH5: boolean;
-  @state() private declare loading: boolean;
   @state() private declare rightClickedChannelKey: string | null;
   @state() private declare menuDisplay: 'block' | 'none';
   @state() private declare menuTop: number;
   @state() private declare menuLeft: number;
   @state() private declare menu: { id: string; icon: string; label: string; target: string }[];
-  @state() private declare convList: ChatUIChannelModel[];
 
   private scrollbarEl: any = null;
   private menuRef: HTMLElement | null = null;
@@ -74,38 +81,23 @@ export class ChannelListProvider extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.isH5 = isMobileDevice();
-    this.loading = false;
     this.rightClickedChannelKey = null;
     this.menuDisplay = 'none';
     this.menuTop = 0;
     this.menuLeft = 0;
     this.menu = [];
 
-    const context = ctx();
-    this.convList = context.channelModule.getCachedChannelList();
-    channelList.value = this.convList;
-
     window.addEventListener('resize', this.checkDevice);
-    document.body.addEventListener('mouseup', this.handleHide, false);
+    document.body.addEventListener('mouseup', this.handleMouseUp, false);
     window.addEventListener('blur', this.handleHide, false);
-
-    context.addEventListener(InnerEvent.CHANNELS_LIST_RESET, this.onChannelListInited);
-    context.addEventListener(InnerEvent.CHANNELS_ITEM_ORDER_CHANGE, this.onChannelListItemOrderChange);
-    context.addEventListener(InnerEvent.CHANNELS_ITEM_CHANGE, this.onChannelListItemChange);
-    context.addEventListener(InnerEvent.CHANNELS_ITEM_DELETED, this.onChannelListItemRemove);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    const context = ctx();
+    this.longPress.cancel();
     window.removeEventListener('resize', this.checkDevice);
-    document.body.removeEventListener('mouseup', this.handleHide, false);
+    document.body.removeEventListener('mouseup', this.handleMouseUp, false);
     window.removeEventListener('blur', this.handleHide, false);
-
-    context.removeEventListener(InnerEvent.CHANNELS_LIST_RESET, this.onChannelListInited);
-    context.removeEventListener(InnerEvent.CHANNELS_ITEM_ORDER_CHANGE, this.onChannelListItemOrderChange);
-    context.removeEventListener(InnerEvent.CHANNELS_ITEM_CHANGE, this.onChannelListItemChange);
-    context.removeEventListener(InnerEvent.CHANNELS_ITEM_DELETED, this.onChannelListItemRemove);
   }
 
   protected updated() {
@@ -122,54 +114,6 @@ export class ChannelListProvider extends LitElement {
 
   private checkDevice = () => {
     this.isH5 = isMobileDevice();
-  };
-
-  private onChannelListInited = async (e: ChannelListFirstScreenRenderingEvent) => {
-    this.convList = [...e.data];
-    channelList.value = this.convList;
-    this.loading = this.convList.length >= 30;
-    ctx().channelModule.updateLatesMessageStatus(this.convList);
-  };
-
-  private onChannelListItemOrderChange = (e: ChannelsItemOrderChangeEvent) => {
-    const list = [...this.convList];
-    e.data.forEach((item) => {
-      const index = list.findIndex((c) => item.model.channelIdentifier.isEqualTo(c.channelIdentifier));
-      if (index !== -1) {
-        list.splice(index, 1);
-      }
-      list.splice(item.order, 0, item.model.clone());
-      if (opened.value && item.model.channelIdentifier.isEqualTo(opened.value.channelIdentifier)) {
-        unreadCountBottom.value = item.model.unreadCount;
-      }
-    });
-    this.convList = list;
-    channelList.value = list;
-  };
-
-  private onChannelListItemChange = (e: ChannelListItemChangeEvent) => {
-    const list = [...this.convList];
-    e.data.forEach((item) => {
-      const index = list.findIndex((c) => item.channelIdentifier.isEqualTo(c.channelIdentifier));
-      if (index !== -1) {
-        list.splice(index, 1, item.clone());
-      }
-      if (opened.value && opened.value.channelIdentifier.isEqualTo(item.channelIdentifier)) {
-        unreadCountBottom.value = item.unreadCount;
-      }
-    });
-    this.convList = list;
-    channelList.value = list;
-  };
-
-  private onChannelListItemRemove = (e: ChannelsItemDelteedEvent) => {
-    const list = [...this.convList];
-    e.data.forEach((item) => {
-      const index = list.findIndex((c) => item.channelIdentifier.isEqualTo(c.channelIdentifier));
-      if (index !== -1) list.splice(index, 1);
-    });
-    this.convList = list;
-    channelList.value = list;
   };
 
   private handleTimeFilter(updateTime: number): string {
@@ -260,21 +204,14 @@ export class ChannelListProvider extends LitElement {
     this.rightClickedChannelKey = null;
   }
 
-  private handleScrollLoading = async () => {
-    if (!this.loading) return;
-    const lastChannel = this.convList[this.convList.length - 1];
-    const context = ctx();
-    const { hasMore, code, list } = await context.channelModule.getMoreChannelList(lastChannel);
-    if (code === 0) {
-      this.convList = [...this.convList, ...list];
-      channelList.value = this.convList;
-      this.loading = hasMore;
-    }
-    context.channelModule.updateLatesMessageStatus([...list]);
+  private handleScrollLoading = () => loadMoreChannels();
+
+  private handleMouseUp = (e: MouseEvent) => {
+    if (e.button !== 0) return;
+    this.handleHide();
   };
 
-  private handleHide = (e: any) => {
-    if (e.button !== 0) return;
+  private handleHide = () => {
     this.menuDisplay = 'none';
     this.rightClickedChannelKey = null;
   };
@@ -294,7 +231,7 @@ export class ChannelListProvider extends LitElement {
   }
 
   render() {
-    const list = this.convList || [];
+    const list = channelList.value;
     const emptyDesc = this.i18n.t('channel.list.empty.desc');
 
     if (list.length === 0) {
@@ -306,7 +243,7 @@ export class ChannelListProvider extends LitElement {
         ${(el: Element) => { this.scrollbarEl = el; }}>
         <div class="nc-channel-wrap">
           ${this.isH5 && this.menuDisplay === 'block' ? html`
-            <div class="nc-channel-list-menu-mask" @click=${() => this.handleHide({ button: 0 })}></div>
+            <div class="nc-channel-list-menu-mask" @click=${this.handleHide}></div>
           ` : nothing}
           <div class="nc-channel-list-menu" style="top: ${this.menuTop}px; left: ${this.menuLeft}px; display: ${this.menuDisplay};">
             ${this.menu.map(item => html`
@@ -322,7 +259,7 @@ export class ChannelListProvider extends LitElement {
           <div class="nc-channel-list">
             ${list.map(item => html`
               <nc-channel-list-item
-                .message=${getMessageDigest(item.latestMessage)}
+                .message=${getChannelLatestMessageDigest(item.latestMessage)}
                 .time=${this.handleTimeFilter(item.updateTime)}
                 .model=${item}
                 .draft=${this.isDraft(item)}
@@ -331,11 +268,15 @@ export class ChannelListProvider extends LitElement {
                 .selected=${opened.value ? opened.value.channelIdentifier.isEqualTo(item.channelIdentifier) : false}
                 .rightClicked=${this.rightClickedChannelKey === trans2ChannelKey(item.channelIdentifier)}
                 @contextmenu=${(e: MouseEvent) => { e.preventDefault(); this.handleChannelRightClick(item, e); }}
+                @touchstart=${this.longPress.start}
+                @touchmove=${this.longPress.move}
+                @touchend=${this.longPress.end}
+                @touchcancel=${this.longPress.cancel}
                 @menu-click=${(e: CustomEvent) => this.handleChannelRightClick(item, e.detail[0])}
                 @click=${(e: MouseEvent) => this.handleChannelClick(item, e)}>
               </nc-channel-list-item>
             `)}
-            ${this.loading ? html`<nc-channel-loading></nc-channel-loading>` : nothing}
+            ${channelListHasMore.value ? html`<nc-channel-loading></nc-channel-loading>` : nothing}
           </div>
         </div>
       </nc-scrollbar-provider>

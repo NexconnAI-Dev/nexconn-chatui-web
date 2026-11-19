@@ -18,7 +18,7 @@ import {
   ReplyMessageInfo,
 } from './input-helper';
 import { ChatUICommand } from '@lib/enums/ChatUICommand';
-import { ChannelSelectedEvent, ChatUIEvents, InnerEvent, SetTextareaValueEvent, MessagesDeletedEvent } from '@lib/core/EventDefined';
+import { ChannelSelectedEvent, ChatUIEvents, InnerEvent, SetTextareaValueEvent, MessagesDeletedEvent, MessageStateChangeEvent } from '@lib/core/EventDefined';
 import { isMobileDevice } from '@lib/helper';
 import { INPUT_ICON_SEND_ICON, INPUT_ICON_SEND_ACTIVE_ICON } from '../../assets';
 import { Unsubscribe } from '../signal';
@@ -48,6 +48,11 @@ export class InputProvider extends LitElement {
       max-height: 248px;
       border-bottom: 1px solid #efefef;
       border-top: 1px solid #efefef;
+    }
+    .nc-input-emoji-panel {
+      height: 248px;
+      flex-shrink: 0;
+      box-sizing: border-box;
     }
     .nc-input-top-buttons {
       width: 100%;
@@ -94,18 +99,21 @@ export class InputProvider extends LitElement {
       border: none;
       border-radius: 0;
       margin: 0;
+      padding: 9px 0;
       overflow-y: hidden;
       box-sizing: border-box;
     }
     .textarea {
+      display: block;
       border: none;
       outline: none;
       background: none;
       min-height: 21px;
-      height: 36px;
-      max-height: calc(21px * 5);
+      height: 21px;
+      /* Keep 6px of the preceding line visible when scrolled to the bottom. */
+      max-height: calc(21px * 4 + 6px);
       box-sizing: border-box;
-      padding: 9px 10px;
+      padding: 0 10px;
       width: 100%;
       resize: none;
       word-wrap: break-word;
@@ -120,13 +128,14 @@ export class InputProvider extends LitElement {
     .textarea::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.3); }
     .textarea { scrollbar-width: thin; scrollbar-color: rgba(0,0,0,0.2) transparent; }
     .hidden-dom {
+      white-space: pre-wrap;
       border: none;
       outline: none;
       background: none;
       line-height: 21px;
       min-height: 21px;
       height: 21px;
-      overflow: scroll;
+      overflow: hidden;
       box-sizing: border-box;
       padding: 0;
       width: 100%;
@@ -233,6 +242,7 @@ export class InputProvider extends LitElement {
 
   private currentMenuButton: HTMLElement | null = null;
   private syncTimer: number | undefined;
+  private inputResizeObserver?: ResizeObserver;
   private unsubReplyMessage?: Unsubscribe;
 
   private get mentionAll(): boolean {
@@ -267,9 +277,15 @@ export class InputProvider extends LitElement {
     this.showEmojiPanel = false;
     this.showAtPanel = false;
     this.replyMsgInfo = createReplyMessageInfo();
+    let previousReplyMessage = replyMessage.value;
     this.unsubReplyMessage = replyMessage.subscribe(() => {
+      const current = replyMessage.value;
+      const isSameReply = current && previousReplyMessage
+        && current.channelIdentifier.isEqualTo(previousReplyMessage.channelIdentifier)
+        && current.isEqual(previousReplyMessage);
+      previousReplyMessage = current;
       this.replyMsgInfo = createReplyMessageInfo();
-      this.onReplyMessageChange(this.replyMsgInfo);
+      if (!isSameReply) this.onReplyMessageChange(this.replyMsgInfo);
     });
 
     const context = ctx();
@@ -281,6 +297,7 @@ export class InputProvider extends LitElement {
     context.addEventListener(ChatUIEvents.CHANNEL_SELECTED, this.handleChannelOpen);
     context.addEventListener(InnerEvent.SET_TEXTAREA_VALUE_EVENT, this.setTextareaValue);
     context.addEventListener(ChatUIEvents.MESSAGES_DELETED, this.handleMessagesDeleted);
+    context.addEventListener(InnerEvent.MESSAGE_STATE_CHANGE, this.handleMessagesUpdated);
 
     // Poll shared reactive state from input-helper.
     // TODO: Optimize this synchronization.
@@ -297,6 +314,7 @@ export class InputProvider extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    this.inputResizeObserver?.disconnect();
     this.unsubReplyMessage?.();
     window.clearInterval(this.syncTimer);
     window.removeEventListener('click', this.handleWindowClick);
@@ -308,6 +326,7 @@ export class InputProvider extends LitElement {
     context.removeEventListener(ChatUIEvents.CHANNEL_SELECTED, this.handleChannelOpen);
     context.removeEventListener(InnerEvent.SET_TEXTAREA_VALUE_EVENT, this.setTextareaValue);
     context.removeEventListener(ChatUIEvents.MESSAGES_DELETED, this.handleMessagesDeleted);
+    context.removeEventListener(InnerEvent.MESSAGE_STATE_CHANGE, this.handleMessagesUpdated);
   }
 
   protected firstUpdated() {
@@ -316,8 +335,17 @@ export class InputProvider extends LitElement {
     textarea.value.addEventListener('paste', onPaste);
 
     const draft = openedChannel.value?.draft || '';
-    textarea.value.value = draft;
+    resetTextareaValue(textarea.value, this.hiddenDomEl, this.inputContainerEl, this.mainEl, draft);
     this.inputValue = draft;
+    let lastWidth = 0;
+    this.inputResizeObserver = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      if (width > 0 && width !== lastWidth) {
+        resizeTextarea(this.textareaEl, this.hiddenDomEl, this.inputContainerEl);
+      }
+      lastWidth = width;
+    });
+    this.inputResizeObserver.observe(this.textareaEl);
   }
 
   private checkDevice() {
@@ -330,16 +358,20 @@ export class InputProvider extends LitElement {
     return item.icon;
   }
 
-  private handleMenuClick(item: InputMenumItem, event: MouseEvent) {
-    const isSecondaryMenuItem = this.secondaryMenuItems.some(m => m.id === item.id);
-    if (isSecondaryMenuItem) {
-      this.executeMenuItemAction(item, event);
-      hidePrompt();
-      this.secondaryMenuItems = [];
-      this.currentMenuButton = null;
-      return;
-    }
-    if (item.submenu && item.submenu.length > 0) {
+  private hideInputPanels() {
+    hidePrompt();
+    this.showEmojiPanel = false;
+    this.showAtPanel = false;
+    this.secondaryMenuVisible = false;
+    this.secondaryMenuItems = [];
+    this.currentMenuButton = null;
+  }
+
+  private handleMenuClick(item: InputMenumItem, event: MouseEvent, isSecondaryMenuItem = false) {
+    const isCurrentMenuButton = secondaryVisible.value && this.currentMenuButton === event.currentTarget;
+    this.hideInputPanels();
+    if (!isSecondaryMenuItem && item.submenu && item.submenu.length > 0) {
+      if (isCurrentMenuButton) return;
       event.stopPropagation();
       const filteredSubmenu = item.submenu.filter(this.filter).map(this.mapHandle);
       if (filteredSubmenu.length > 0) {
@@ -361,6 +393,7 @@ export class InputProvider extends LitElement {
       case InputMenumID.EMOJI:
         event.stopPropagation();
         showEmojiPanel();
+        this.showEmojiPanel = true;
         break;
       case InputMenumID.IMAGES:
         pickFiles('image/jpg, image/png, image/jpeg, image/gif', (files) => {
@@ -401,7 +434,10 @@ export class InputProvider extends LitElement {
       }
     }
     insertChatEmoji(evt, textarea.value);
-    if (textarea.value) this.inputValue = textarea.value.value;
+    if (textarea.value) {
+      this.inputValue = textarea.value.value;
+      resizeTextarea(textarea.value, this.hiddenDomEl, this.inputContainerEl);
+    }
   }
 
   private handleInputWrapper(event: InputEvent) {
@@ -494,9 +530,7 @@ export class InputProvider extends LitElement {
     const target = event.target as HTMLElement;
     if (this.secondarDOMEl && this.secondarDOMEl.contains(target)) return;
     if (this.currentMenuButton && this.currentMenuButton.contains(target)) return;
-    hidePrompt();
-    this.secondaryMenuItems = [];
-    this.currentMenuButton = null;
+    this.hideInputPanels();
   };
 
   private handleWindowResize = () => {
@@ -511,6 +545,20 @@ export class InputProvider extends LitElement {
     const isDeletedOrRecalled = evt.data.some(data => data.messageId === replyMessage.value?.messageId);
     if (isDeletedOrRecalled) {
       replyMessage.value = null;
+      ctx().alert('message.reference.deleted');
+    }
+  };
+
+  private handleMessagesUpdated = (evt: MessageStateChangeEvent) => {
+    const current = replyMessage.value;
+    if (!current) return;
+    const updated = evt.data.find(message => message.channelIdentifier.isEqualTo(current.channelIdentifier)
+      && message.isEqual(current));
+    if (!updated) return;
+    if (updated === current) {
+      replyMessage.notify();
+    } else {
+      replyMessage.value = updated;
     }
   };
 
@@ -583,7 +631,7 @@ export class InputProvider extends LitElement {
           <div class="secondary-menu" style="display: ${this.secondaryMenuVisible ? 'flex' : 'none'};"
             @click=${(e: MouseEvent) => e.stopPropagation()}>
             ${this.secondaryMenuItems.map(item => html`
-              <div class="secondary-menu-item" @click=${(e: MouseEvent) => this.handleMenuClick(item, e)}>
+              <div class="secondary-menu-item" @click=${(e: MouseEvent) => this.handleMenuClick(item, e, true)}>
                 <img .src=${item.icon} alt="Icon"><span>${item.label}</span>
               </div>
             `)}

@@ -3,7 +3,7 @@ import { state } from 'lit/decorators.js';
 import { SEARCH_ICON, CHECKED_ICON } from '../../../assets';
 import { ChatUIChannelModel } from '@lib/models/NCUIChannelModel';
 import { I18nController } from '../../i18n/lit';
-import { channelList } from '../context';
+import { channelList, ctx } from '../context';
 import { ChannelType } from '@nexconn/chat';
 
 export class ModalForwardingProvider extends LitElement {
@@ -45,7 +45,7 @@ export class ModalForwardingProvider extends LitElement {
       color: #41464F;
     }
     .search .search-input::placeholder { color: #41464F; }
-    .search .search-icon { position: absolute; top: 8px; left: 10px; }
+    .search .search-icon { position: absolute; top: 50%; left: 10px; transform: translateY(-50%); }
     .list {
       min-height: 0;
       padding: 0 20px;
@@ -129,8 +129,11 @@ export class ModalForwardingProvider extends LitElement {
     .cancel:hover { background-color: #E3E7EF; }
     .confirm:hover:not(:disabled) { background-color: #366EFF; }
     @media (max-width: 768px) {
+      nc-modal-dialog {
+        width: 100%;
+        --nc-chatui-modal-mobile-width: 100%;
+      }
       .nc-chatui-modal-dialog-header { width: auto; padding-left: 20px; padding-right: 20px; }
-      .search .search-input { width: 100%; max-width: 400px; }
     }
   `;
 
@@ -140,12 +143,27 @@ export class ModalForwardingProvider extends LitElement {
 
   private i18n = new I18nController(this);
   private _debounceTimer: any = null;
+  private unsubscribeChannels?: () => void;
 
   connectedCallback() {
     super.connectedCallback();
     this.search = '';
     this.checkedChannels = [];
-    this.renderChannels = channelList.value.filter(item => item.channelType !== ChannelType.SYSTEM);
+    this.refreshChannels();
+    this.unsubscribeChannels = channelList.subscribe(() => this.refreshChannels());
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this.unsubscribeChannels?.();
+    clearTimeout(this._debounceTimer);
+    this._debounceTimer = null;
+  }
+
+  private refreshChannels() {
+    const candidates = ctx().channelModule.getCachedChannelList().filter(item => item.channelType !== ChannelType.SYSTEM);
+    this.renderChannels = candidates.filter(item => item.name.includes(this.search));
+    this.checkedChannels = candidates.filter(item => this.isChannelChecked(item));
   }
 
   private handleInputChange(e: Event) {
@@ -153,7 +171,7 @@ export class ModalForwardingProvider extends LitElement {
     this.search = val;
     if (!this._debounceTimer) {
       this._debounceTimer = setTimeout(() => {
-        this.renderChannels = channelList.value.filter(item => item.name.includes(this.search));
+        this.refreshChannels();
         clearTimeout(this._debounceTimer);
         this._debounceTimer = null;
       }, 500);

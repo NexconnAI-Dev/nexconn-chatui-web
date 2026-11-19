@@ -28,7 +28,7 @@ export class ChannelDetailProvider extends LitElement {
       position: relative;
     }
     .nc-chatui-app-wrapper-right.is-h5 .nc-chatui-app-inner {
-      min-width: 350px;
+      min-width: 0;
     }
     .nc-chatui-msg-list {
       flex: 1 1 auto;
@@ -97,7 +97,7 @@ export class ChannelDetailProvider extends LitElement {
             ></nc-channel-detail-bar-provider>
             <nc-toast-provider></nc-toast-provider>
             <nc-message-list-provider class="nc-chatui-msg-list"></nc-message-list-provider>
-            ${!multiChoice && !isSystem ? html`<nc-input-provider .model=${opened}></nc-input-provider>` : ''}
+            ${!isSystem ? html`<nc-input-provider .model=${opened} style=${multiChoice ? 'display: none' : ''}></nc-input-provider>` : ''}
             ${multiChoice ? html`<nc-multi-choice-menu-provider></nc-multi-choice-menu-provider>` : ''}
           `}
         </div>

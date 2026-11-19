@@ -42,8 +42,8 @@ export class SystemCache extends BasicCache<ICacheSystemProfile, ChatUISystemPro
     let changed = false;
 
     if (cacheProfile) {
-      if (!this._isSameSystemProfile(cacheProfile, profile)) {
-        // Update cached data.
+      if (cacheProfile.usingDefault || !this._isSameSystemProfile(cacheProfile, profile)) {
+        // A confirmed profile replaces the default state even when its fields match.
         this._updateCacheSystemProfile(cacheProfile, profile);
         changed = true;
       }
